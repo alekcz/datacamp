@@ -1,0 +1,123 @@
+# Docker Compose
+
+services:
+  # PostgreSQL for testing
+  postgres:
+    image: postgres:15-alpine
+    container_name: datacamp-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: datahike_test
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - datacamp-network
+
+  # MySQL for testing
+  mysql:
+    image: mysql:8.0
+    container_name: datacamp-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: datahike_test
+      MYSQL_USER: datacamp
+      MYSQL_PASSWORD: datacamp
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - datacamp-network
+
+  # Redis for testing
+  redis:
+    image: redis:7-alpine
+    container_name: datacamp-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - datacamp-network
+
+  # Optional: Redis Commander (Redis GUI)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: datacamp-redis-commander
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - datacamp-network
+    profiles:
+      - tools
+
+  # Optional: pgAdmin (Postgres GUI)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: datacamp-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@datacamp.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    networks:
+      - datacamp-network
+    profiles:
+      - tools
+
+  # Optional: phpMyAdmin (MySQL GUI)
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: datacamp-phpmyadmin
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: password
+    ports:
+      - "8082:80"
+    depends_on:
+      - mysql
+    networks:
+      - datacamp-network
+    profiles:
+      - tools
+
+volumes:
+  postgres-data:
+    driver: local
+  mysql-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  datacamp-network:
+    driver: bridge

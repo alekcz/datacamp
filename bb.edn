@@ -1,0 +1,178 @@
+{:tasks
+ {;; Docker environment tasks
+  :requires ([babashka.process :as p]
+             [clojure.string :as str])
+
+  docker:start
+  {:doc "Start test database environment"
+   :task (do
+           (println "🚀 Starting test databases...")
+           (p/shell "docker-compose up -d postgres mysql redis")
+           (println "\n⏳ Waiting for databases to be healthy...")
+           (Thread/sleep 5000)
+           (println "\n✅ Databases started!")
+           (println "\nConnection details:")
+           (println "  PostgreSQL: localhost:5432 (postgres/postgres)")
+           (println "  MySQL:      localhost:3306 (root/password)")
+           (println "  Redis:      localhost:6379")
+           (println "\n💡 Run 'bb docker:status' to check health"))}
+
+  docker:stop
+  {:doc "Stop test database environment"
+   :task (do
+           (println "Stopping test databases...")
+           (p/shell "docker-compose down")
+           (println "✅ Databases stopped"))}
+
+  docker:restart
+  {:doc "Restart test database environment"
+   :task (do
+           (run 'docker:stop)
+           (Thread/sleep 2000)
+           (run 'docker:start))}
+
+  docker:reset
+  {:doc "Reset databases (removes all data)"
+   :task (do
+           (println "⚠️  This will delete all test data!")
+           (print "Continue? (y/N): ")
+           (flush)
+           (let [input (str/lower-case (read-line))]
+             (if (= input "y")
+               (do
+                 (println "\n🗑️  Removing containers and volumes...")
+                 (p/shell "docker-compose down -v")
+                 (Thread/sleep 2000)
+                 (run 'docker:start))
+               (println "Cancelled."))))}
+
+  docker:status
+  {:doc "Check status of test databases"
+   :task (do
+           (println "📊 Database Status\n==================\n")
+           (p/shell "docker-compose ps")
+           (println "\n💡 Commands:")
+           (println "  bb docker:start   - Start databases")
+           (println "  bb docker:stop    - Stop databases")
+           (println "  bb docker:restart - Restart databases")
+           (println "  bb docker:reset   - Reset (delete all data)")
+           (println "  bb docker:logs    - View logs"))}
+
+  docker:logs
+  {:doc "View database logs"
+   :task (p/shell "docker-compose logs -f")}
+
+  docker:tools
+  {:doc "Start database admin tools"
+   :task (do
+           (println "🛠️  Starting admin tools...")
+           (p/shell "docker-compose --profile tools up -d")
+           (println "\n🌐 Admin tools available:")
+           (println "  pgAdmin:         http://localhost:8080 (admin@datacamp.local/admin)")
+           (println "  phpMyAdmin:      http://localhost:8082 (root/password)")
+           (println "  Redis Commander: http://localhost:8081"))}
+
+  ;; Test tasks
+  test:quick
+  {:doc "Run quick tests (no external dependencies)"
+   :task (p/shell "lein test datacamp.directory-test datacamp.integration-test")}
+
+  test:all
+  {:doc "Run all tests (requires databases)"
+   :task (do
+           (println "Running all tests...")
+           (p/shell "lein test"))}
+
+  test:directory
+  {:doc "Run directory tests only"
+   :task (p/shell "lein test datacamp.directory-test")}
+
+  test:postgres
+  {:doc "Run PostgreSQL tests"
+   :task (p/shell "lein test datacamp.postgres-test")}
+
+  test:mysql
+  {:doc "Run MySQL tests"
+   :task (p/shell "lein test datacamp.mysql-test")}
+
+  test:redis
+  {:doc "Run Redis tests"
+   :task (p/shell "lein test datacamp.redis-test")}
+
+  test:integration
+  {:doc "Run integration tests"
+   :task (p/shell "lein test datacamp.integration-test")}
+
+  test:backend
+  {:doc "Run all backend tests (Postgres, MySQL, Redis)"
+   :task (do
+           (println "Running backend tests...")
+           (p/shell "lein test datacamp.postgres-test datacamp.mysql-test datacamp.redis-test"))}
+
+  ;; Combined workflows
+  test
+  {:doc "Start Docker, run all tests, stop Docker (default)"
+   :task (do
+           (run 'docker:start)
+           (Thread/sleep 8000)
+           (println "\n🧪 Running tests...\n")
+           (let [result (p/shell {:continue true} "lein test")]
+             (println "\n🛑 Stopping databases...")
+             (run 'docker:stop)
+             (when (not (zero? (:exit result)))
+               (System/exit 1))))}
+
+  test:with-docker
+  {:doc "Alias for 'test' command"
+   :task (run 'test)}
+
+  ;; Development helpers
+  repl
+  {:doc "Start REPL with test databases"
+   :task (do
+           (println "Starting REPL with test environment...")
+           (println "💡 Databases are available at:")
+           (println "  PostgreSQL: localhost:5432")
+           (println "  MySQL:      localhost:3306")
+           (println "  Redis:      localhost:6379")
+           (p/shell "lein repl"))}
+
+  clean
+  {:doc "Clean build artifacts"
+   :task (p/shell "lein clean")}
+
+  deps
+  {:doc "Download dependencies"
+   :task (p/shell "lein deps")}
+
+  help
+  {:doc "Show available tasks"
+   :task (do
+           (println "Datacamp Development Tasks")
+           (println "==========================\n")
+           (println "Quick Start:")
+           (println "  bb test            - Run everything (start Docker, test, stop)")
+           (println "\nDocker Management:")
+           (println "  bb docker:start    - Start test databases")
+           (println "  bb docker:stop     - Stop test databases")
+           (println "  bb docker:restart  - Restart test databases")
+           (println "  bb docker:reset    - Reset databases (delete data)")
+           (println "  bb docker:status   - Check database status")
+           (println "  bb docker:logs     - View database logs")
+           (println "  bb docker:tools    - Start admin tools (pgAdmin, etc.)")
+           (println "\nTesting:")
+           (println "  bb test            - Complete workflow (recommended)")
+           (println "  bb test:quick      - Quick tests (no databases needed)")
+           (println "  bb test:all        - Run all tests")
+           (println "  bb test:directory  - Directory backup tests")
+           (println "  bb test:postgres   - PostgreSQL tests")
+           (println "  bb test:mysql      - MySQL tests")
+           (println "  bb test:redis      - Redis tests")
+           (println "  bb test:backend    - All backend tests")
+           (println "  bb test:integration - Integration tests")
+           (println "\nDevelopment:")
+           (println "  bb repl            - Start REPL")
+           (println "  bb clean           - Clean build artifacts")
+           (println "  bb deps            - Download dependencies")
+           (println "\n💡 Use 'bb <task>' to run any task")
+           (println "   Example: bb docker:start"))}}}

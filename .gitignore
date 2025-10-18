@@ -1,0 +1,25 @@
+/target
+/classes
+/checkouts
+profiles.clj
+pom.xml
+pom.xml.asc
+*.jar
+*.class
+/.lein-*
+/.nrepl-port
+/.prepl-port
+.hgignore
+.hg/
+/datahike
+*.temp.*
+
+# Test artifacts
+/test-output
+/test-backups
+
+# Environment
+.env
+
+# Docker
+.docker-data
