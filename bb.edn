@@ -103,6 +103,10 @@
   {:doc "Run integration tests"
    :task (p/shell "lein test datacamp.integration-test")}
 
+  test:complex
+  {:doc "Run complex schema comparison test (Datahike migrate vs datacamp)"
+   :task (p/shell "lein test datacamp.complex-test")}
+
   test:backend
   {:doc "Run all backend tests (Postgres, MySQL, Redis)"
    :task (do
@@ -170,6 +174,7 @@
            (println "  bb test:redis      - Redis tests")
            (println "  bb test:backend    - All backend tests")
            (println "  bb test:integration - Integration tests")
+           (println "  bb test:complex    - Complex schema comparison test")
            (println "\nDevelopment:")
            (println "  bb repl            - Start REPL")
            (println "  bb clean           - Clean build artifacts")

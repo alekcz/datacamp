@@ -129,3 +129,13 @@
       (.getName)
       (clojure.string/split #"@")
       first))
+
+(defn response->bytes
+  "Convert AWS SDK response body to byte array
+  The AWS SDK returns the body as a java.io.InputStream"
+  [response]
+  (when-let [body (:Body response)]
+    (with-open [in body]
+      (let [baos (java.io.ByteArrayOutputStream.)]
+        (clojure.java.io/copy in baos)
+        (.toByteArray baos)))))

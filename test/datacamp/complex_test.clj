@@ -1,0 +1,959 @@
+(ns datacamp.complex-test
+  "Complex integration test comparing Datahike migrate vs datacamp backup/restore
+
+  This test uses a comprehensive schema exercising:
+  - Multiple entity types with refs
+  - Component attributes (addresses, line items)
+  - Cardinality-many on refs and scalars
+  - Unique identities and values
+  - Full-text search attributes
+  - Soft deletes
+  - Complex relationships (manager chains, orders->invoices->payments)
+
+  It performs:
+  1. Creates rich test data with all entity types
+  2. Exports using Datahike's migrate
+  3. Exports using datacamp backup
+  4. Restores from both
+  5. Compares all three databases datom-by-datom and entity-by-entity"
+  (:require [clojure.test :refer :all]
+            [datahike.api :as d]
+            [datahike.migrate :as migrate]
+            [datacamp.core :as backup]
+            [datacamp.test-helpers :refer :all]
+            [clojure.set :as set]))
+
+;; Complex schema based on complexspec.md
+(def complex-schema
+  [;; Core / meta
+   {:db/ident :entity/id
+    :db/valueType :db.type/uuid
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}
+
+   {:db/ident :entity/type
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :entity/created-at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :entity/updated-at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :entity/deleted?
+    :db/valueType :db.type/boolean
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   ;; Company
+   {:db/ident :company/name
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/value}
+
+   {:db/ident :company/tags
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/index true}
+
+   {:db/ident :company/addresses
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/isComponent true}
+
+   ;; Person
+   {:db/ident :person/full-name
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :person/email
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/many
+    :db/unique :db.unique/value
+    :db/index true}
+
+   {:db/ident :person/phone
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/many}
+
+   {:db/ident :person/company
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :person/manager
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :person/roles
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/index true}
+
+   {:db/ident :person/addresses
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/isComponent true}
+
+   {:db/ident :person/devices
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many}
+
+   {:db/ident :person/tags
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/index true}
+
+   ;; Address (component)
+   {:db/ident :address/label
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :address/line-1
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :address/city
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :address/country
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :address/postal-code
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   ;; Product & tagging
+   {:db/ident :product/sku
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity
+    :db/index true}
+
+   {:db/ident :product/name
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :product/description
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :product/price
+    :db/valueType :db.type/bigdec
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :product/currency
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :product/tags
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/index true}
+
+   {:db/ident :tag/name
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/value
+    :db/index true}
+
+   ;; Orders, Invoices, Payments
+   {:db/ident :order/number
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity
+    :db/index true}
+
+   {:db/ident :order/customer
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :order/lines
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/isComponent true}
+
+   {:db/ident :line/product
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :line/qty
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :line/unit-price
+    :db/valueType :db.type/bigdec
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :invoice/number
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity
+    :db/index true}
+
+   {:db/ident :invoice/order
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :invoice/status
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :invoice/lines
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many
+    :db/isComponent true}
+
+   {:db/ident :payment/idempotency-key
+    :db/valueType :db.type/uuid
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/value
+    :db/index true}
+
+   {:db/ident :payment/invoice
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :payment/amount
+    :db/valueType :db.type/bigdec
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :payment/currency
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :payment/method
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one}
+
+   ;; Subscriptions
+   {:db/ident :subscription/code
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity
+    :db/index true}
+
+   {:db/ident :subscription/account
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :subscription/plan
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :subscription/status
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :subscription/started-at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :subscription/canceled-at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one}
+
+   ;; Devices & Events
+   {:db/ident :device/serial
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity
+    :db/index true}
+
+   {:db/ident :device/owner
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :device/kind
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :event/type
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :event/at
+    :db/valueType :db.type/instant
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :event/subject
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :event/data
+    :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   ;; ACL
+   {:db/ident :role/name
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/value
+    :db/index true}
+
+   {:db/ident :role/permissions
+    :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many}
+
+   {:db/ident :permission/resource
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+
+   {:db/ident :permission/ops
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/many}
+
+   ;; Reference data
+   {:db/ident :currency/code
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/value
+    :db/index true}
+
+   {:db/ident :currency/decimals
+    :db/valueType :db.type/long
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident :tax-rule/code
+    :db/valueType :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/value}
+
+   {:db/ident :tax-rule/rate
+    :db/valueType :db.type/bigdec
+    :db/cardinality :db.cardinality/one}])
+
+(defn generate-complex-test-data
+  "Generate rich test data covering all entity types"
+  []
+  (let [now (java.util.Date.)
+        yesterday (java.util.Date. (- (.getTime now) (* 24 60 60 1000)))]
+
+    ;; Reference data and tags
+    [{:entity/id (java.util.UUID/randomUUID)
+      :entity/type :currency
+      :entity/created-at now
+      :currency/code :ZAR
+      :currency/decimals 2}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :currency
+      :entity/created-at now
+      :currency/code :USD
+      :currency/decimals 2}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :currency
+      :entity/created-at now
+      :currency/code :EUR
+      :currency/decimals 2}
+
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :tag
+      :entity/created-at now
+      :tag/name :electronics}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :tag
+      :entity/created-at now
+      :tag/name :apparel}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :tag
+      :entity/created-at now
+      :tag/name :clearance}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :tag
+      :entity/created-at now
+      :tag/name :vip-only}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :tag
+      :entity/created-at now
+      :tag/name :vip}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :tag
+      :entity/created-at now
+      :tag/name :churn-risk}
+
+     ;; Roles and permissions
+     {:db/id "admin-read-perm"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :permission
+      :entity/created-at now
+      :permission/resource :invoice
+      :permission/ops [:read :create :update :delete :settle]}
+     {:db/id "admin-role"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :role
+      :entity/created-at now
+      :role/name :admin
+      :role/permissions ["admin-read-perm"]}
+     {:db/id "sales-perm"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :permission
+      :entity/created-at now
+      :permission/resource :order
+      :permission/ops [:read :create]}
+     {:db/id "sales-role"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :role
+      :entity/created-at now
+      :role/name :sales
+      :role/permissions ["sales-perm"]}
+
+     ;; Companies
+     {:db/id "acme"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :company
+      :entity/created-at now
+      :entity/updated-at now
+      :company/name "Acme Retail SA"
+      :company/tags [[:tag/name :vip]]
+      :company/addresses [{:address/label :billing
+                          :address/line-1 "123 Main St"
+                          :address/city "Johannesburg"
+                          :address/country "South Africa"
+                          :address/postal-code "2000"}
+                         {:address/label :shipping
+                          :address/line-1 "456 Warehouse Rd"
+                          :address/city "Cape Town"
+                          :address/country "South Africa"
+                          :address/postal-code "8000"}]}
+     {:db/id "blue"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :company
+      :entity/created-at now
+      :company/name "Blue Logistics"
+      :company/addresses [{:address/label :registered
+                          :address/line-1 "789 Port Ave"
+                          :address/city "Durban"
+                          :address/country "South Africa"
+                          :address/postal-code "4000"}]}
+
+     ;; People (with manager chains and multi-valued emails)
+     {:db/id "ceo"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :person
+      :entity/created-at now
+      :person/full-name "Alice Smith"
+      :person/email ["alice@acme.com" "alice.smith@acme.com"]
+      :person/phone ["+27111234567" "+27821234567"]
+      :person/company "acme"
+      :person/roles ["admin-role"]
+      :person/tags [[:tag/name :vip]]
+      :person/addresses [{:address/label :home
+                         :address/line-1 "10 Hill Rd"
+                         :address/city "Pretoria"
+                         :address/country "South Africa"
+                         :address/postal-code "0001"}]}
+     {:db/id "manager1"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :person
+      :entity/created-at now
+      :person/full-name "Bob Johnson"
+      :person/email ["bob@acme.com"]
+      :person/phone ["+27111234568"]
+      :person/company "acme"
+      :person/manager "ceo"
+      :person/roles ["sales-role"]}
+     {:db/id "employee1"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :person
+      :entity/created-at now
+      :person/full-name "Carol Davis"
+      :person/email ["carol@acme.com"]
+      :person/company "acme"
+      :person/manager "manager1"}
+     {:db/id "employee2"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :person
+      :entity/created-at now
+      :person/full-name "Dave Wilson"
+      :person/email ["dave@acme.com"]
+      :person/company "acme"
+      :person/manager "manager1"
+      :person/tags [[:tag/name :churn-risk]]}
+     {:db/id "blue-ceo"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :person
+      :entity/created-at now
+      :person/full-name "Eve Brown"
+      :person/email ["eve@bluelogistics.com"]
+      :person/company "blue"
+      :person/roles ["admin-role"]}
+
+     ;; Products
+     {:db/id "prod1"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :product
+      :entity/created-at now
+      :product/sku "LAPTOP-001"
+      :product/name "Business Laptop Pro"
+      :product/description "High-performance laptop for professionals with 16GB RAM"
+      :product/price 15999.99M
+      :product/currency [:currency/code :ZAR]
+      :product/tags [[:tag/name :electronics]]}
+     {:db/id "prod2"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :product
+      :entity/created-at now
+      :product/sku "SHIRT-001"
+      :product/name "Corporate Shirt"
+      :product/description "Professional cotton shirt for office wear"
+      :product/price 299.99M
+      :product/currency [:currency/code :ZAR]
+      :product/tags [[:tag/name :apparel]]}
+     {:db/id "prod3"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :product
+      :entity/created-at now
+      :product/sku "MOUSE-CLEAR"
+      :product/name "Wireless Mouse"
+      :product/description "Ergonomic wireless mouse clearance sale"
+      :product/price 99.99M
+      :product/currency [:currency/code :ZAR]
+      :product/tags [[:tag/name :electronics] [:tag/name :clearance]]}
+
+     ;; Orders with line items (component)
+     {:db/id "order1"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :order
+      :entity/created-at yesterday
+      :order/number "ORD-2024-001"
+      :order/customer "ceo"
+      :order/lines [{:line/product "prod1"
+                    :line/qty 2
+                    :line/unit-price 15999.99M}
+                   {:line/product "prod3"
+                    :line/qty 5
+                    :line/unit-price 99.99M}]}
+     {:db/id "order2"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :order
+      :entity/created-at now
+      :order/number "ORD-2024-002"
+      :order/customer "blue-ceo"
+      :order/lines [{:line/product "prod2"
+                    :line/qty 10
+                    :line/unit-price 299.99M}]}
+
+     ;; Invoices
+     {:db/id "inv1"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :invoice
+      :entity/created-at yesterday
+      :entity/updated-at now
+      :invoice/number "INV-2024-001"
+      :invoice/order "order1"
+      :invoice/status :partially-paid
+      :invoice/lines [{:line/product "prod1"
+                      :line/qty 2
+                      :line/unit-price 15999.99M}
+                     {:line/product "prod3"
+                      :line/qty 5
+                      :line/unit-price 99.99M}]}
+     {:db/id "inv2"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :invoice
+      :entity/created-at now
+      :invoice/number "INV-2024-002"
+      :invoice/order "order2"
+      :invoice/status :sent}
+
+     ;; Payments
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :payment
+      :entity/created-at now
+      :payment/idempotency-key (java.util.UUID/randomUUID)
+      :payment/invoice "inv1"
+      :payment/amount 10000.00M
+      :payment/currency [:currency/code :ZAR]
+      :payment/method :card}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :payment
+      :entity/created-at now
+      :payment/idempotency-key (java.util.UUID/randomUUID)
+      :payment/invoice "inv1"
+      :payment/amount 5000.00M
+      :payment/currency [:currency/code :ZAR]
+      :payment/method :eft}
+
+     ;; Subscriptions
+     {:db/id "sub1"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :subscription
+      :entity/created-at yesterday
+      :subscription/code "SUB-ACME-PRO-001"
+      :subscription/account "acme"
+      :subscription/plan :pro
+      :subscription/status :active
+      :subscription/started-at yesterday}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :subscription
+      :entity/created-at yesterday
+      :entity/updated-at now
+      :subscription/code "SUB-BLUE-STARTER-001"
+      :subscription/account "blue"
+      :subscription/plan :starter
+      :subscription/status :canceled
+      :subscription/started-at yesterday
+      :subscription/canceled-at now}
+
+     ;; Devices
+     {:db/id "device1"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :device
+      :entity/created-at now
+      :device/serial "PHONE-001-ABC"
+      :device/owner "ceo"
+      :device/kind :phone}
+     {:db/id "device2"
+      :entity/id (java.util.UUID/randomUUID)
+      :entity/type :device
+      :entity/created-at now
+      :device/serial "POS-ACME-001"
+      :device/owner "acme"
+      :device/kind :pos}
+
+     ;; Events
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :event
+      :entity/created-at now
+      :event/type :audit/login
+      :event/at now
+      :event/subject "ceo"
+      :event/data "{\"ip\":\"192.168.1.1\",\"device\":\"laptop\"}"}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :event
+      :entity/created-at now
+      :event/type :order/placed
+      :event/at yesterday
+      :event/subject "order1"
+      :event/data "{\"channel\":\"web\",\"promo\":\"SUMMER2024\"}"}
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :event
+      :entity/created-at now
+      :event/type :device/reading
+      :event/at now
+      :event/subject "device2"
+      :event/data "{\"temperature\":22.5,\"humidity\":45}"}
+
+     ;; Soft deleted entity
+     {:entity/id (java.util.UUID/randomUUID)
+      :entity/type :person
+      :entity/created-at yesterday
+      :entity/updated-at now
+      :entity/deleted? true
+      :person/full-name "Frank Deleted"
+      :person/email ["frank@deleted.com"]
+      :person/company "acme"}]))
+
+(defn randomized-events []
+  (for [n (range 20000)]
+    {:entity/id (java.util.UUID/randomUUID)
+     :entity/type :event
+     :entity/created-at (java.util.Date. (- (.getTime (java.util.Date.)) (* n 60 60 1000)))
+     :event/type (nth [:device/reading :audit/login :order/placed :order/shipped :order/cancelled] (rand-int 5))
+     :event/at (java.util.Date.)
+     :event/data (str "{\"temperature\":" (rand)  "}")}))
+
+(defn normalize-datom
+  "Normalize a datom for comparison by converting to comparable format
+  Excludes :db/txInstant since these are transaction metadata that differ during replay"
+  [datom]
+  (when-not (= (:a datom) :db/txInstant)
+    {:e (:e datom)
+     :a (:a datom)
+     :v (:v datom)
+     :added (:added datom)}))
+
+(defn get-all-datoms
+  "Get all datoms from a database, sorted for comparison
+  Filters out transaction metadata (:db/txInstant)"
+  [db]
+  (->> (d/datoms db :eavt)
+       (map normalize-datom)
+       (filter some?)  ; Remove nils (txInstant datoms)
+       (sort-by (juxt :e :a))))
+
+(defn compare-databases
+  "Compare two databases datom-by-datom, returning differences
+  Note: Excludes :db/txInstant from comparison as these differ during restore,
+  but verifies both databases have transaction metadata"
+  [db1 db2 db1-name db2-name]
+  (let [datoms1 (set (get-all-datoms db1))
+        datoms2 (set (get-all-datoms db2))
+        only-in-1 (set/difference datoms1 datoms2)
+        only-in-2 (set/difference datoms2 datoms1)
+        common (set/intersection datoms1 datoms2)
+
+        ;; Check that both databases have transaction metadata
+        tx-datoms1 (count (filter #(= :db/txInstant (:a %)) (d/datoms db1 :aevt :db/txInstant)))
+        tx-datoms2 (count (filter #(= :db/txInstant (:a %)) (d/datoms db2 :aevt :db/txInstant)))]
+    {:db1-name db1-name
+     :db2-name db2-name
+     :db1-count (count datoms1)
+     :db2-count (count datoms2)
+     :common-count (count common)
+     :only-in-db1-count (count only-in-1)
+     :only-in-db2-count (count only-in-2)
+     :only-in-db1 (take 10 only-in-1)  ; Sample for debugging
+     :only-in-db2 (take 10 only-in-2)
+     :tx-datoms1 tx-datoms1
+     :tx-datoms2 tx-datoms2
+     :has-tx-metadata? (and (> tx-datoms1 0) (> tx-datoms2 0))
+     :match? (and (empty? only-in-1) (empty? only-in-2))}))
+
+(deftest test-complex-backup-restore-comparison
+  (testing "Complex schema: Compare Datahike migrate vs datacamp backup/restore"
+    (with-test-dir test-dir
+      ;; Create original database with complex schema
+      (let [original-cfg {:store {:backend :mem :id "complex-original"}
+                          :schema-flexibility :write
+                          :keep-history? true}
+            _ (d/create-database original-cfg)
+            original-conn (d/connect original-cfg)]
+
+        (try
+          ;; Install schema
+          (d/transact original-conn {:tx-data complex-schema})
+
+          ;; Populate with rich test data
+          (let [test-data (generate-complex-test-data)
+                rand-data (randomized-events)]
+            (d/transact original-conn {:tx-data test-data})
+            (d/transact original-conn {:tx-data rand-data}))
+
+          ;; Get original state
+          (let [original-db @original-conn
+                original-datom-count (count (d/datoms original-db :eavt))
+                original-entities (d/q '[:find ?e :where [?e :entity/type _]] original-db)]
+
+            (println "Original database:")
+            (println "  Datoms:" original-datom-count)
+            (println "  Entities:" (count original-entities))
+
+            ;; 1. Export using Datahike migrate
+            (let [datahike-export-dir (str test-dir "/datahike-export.cbor")]
+              (migrate/export-db original-conn datahike-export-dir)
+              (println "\nDatahike export completed to:" datahike-export-dir)
+
+              ;; 2. Export using datacamp
+              (let [datacamp-result (backup/backup-to-directory
+                                    original-conn
+                                    {:path test-dir}
+                                    :database-id "complex-original")]
+                (println "\nDatacamp backup completed:")
+                (println "  Backup ID:" (:backup-id datacamp-result))
+                (println "  Datom count:" (:datom-count datacamp-result))
+                (println "  Chunk count:" (:chunk-count datacamp-result))
+
+                (is (:success datacamp-result) "Datacamp backup should succeed")
+                (is (= original-datom-count (:datom-count datacamp-result))
+                    "Datacamp backup should capture all datoms")
+
+                ;; 3. Restore from Datahike migrate
+                (let [datahike-restore-cfg {:store {:backend :mem :id "complex-datahike-restore"}
+                                           :schema-flexibility :write}
+                      _ (d/create-database datahike-restore-cfg)
+                      datahike-restore-conn (d/connect datahike-restore-cfg)]
+                  (migrate/import-db datahike-restore-conn datahike-export-dir)
+                  (let [
+                        datahike-restore-db @datahike-restore-conn
+                        datahike-datom-count (count (d/datoms datahike-restore-db :eavt))
+                        datahike-entities (d/q '[:find ?e :where [?e :entity/type _]] datahike-restore-db)]
+
+                    (println "\nDatahike migrate restored database:")
+                    (println "  Datoms:" datahike-datom-count)
+                    (println "  Entities:" (count datahike-entities))
+
+                    ;; 4. Restore from datacamp
+                    (let [datacamp-restore-cfg {:store {:backend :mem :id "complex-datacamp-restore"}
+                                               :schema-flexibility :write}
+                          _ (d/create-database datacamp-restore-cfg)
+                          datacamp-restore-conn (d/connect datacamp-restore-cfg)
+                          datacamp-restore-result (backup/restore-from-directory
+                                                  datacamp-restore-conn
+                                                  {:path test-dir}
+                                                  (:backup-id datacamp-result)
+                                                  :database-id "complex-original"
+                                                  :verify-checksums true)]
+
+                      (println "\nDatacamp restored database:")
+                      (println "  Success:" (:success datacamp-restore-result))
+                      (println "  Datoms restored:" (:datoms-restored datacamp-restore-result))
+
+                      (is (:success datacamp-restore-result) "Datacamp restore should succeed")
+
+                      (let [datacamp-restore-db @datacamp-restore-conn
+                            datacamp-datom-count (count (d/datoms datacamp-restore-db :eavt))
+                            datacamp-entities (d/q '[:find ?e :where [?e :entity/type _]] datacamp-restore-db)]
+
+                        (println "  Datoms:" datacamp-datom-count)
+                        (println "  Entities:" (count datacamp-entities))
+
+                        ;; 5. Compare all three databases
+                        (println "\n=== Comparing Databases ===")
+
+                        ;; Compare Original vs Datahike Migrate
+                        (let [comp1 (compare-databases original-db datahike-restore-db
+                                                      "Original" "Datahike-Migrate")]
+                          (println "\nOriginal vs Datahike-Migrate:")
+                          (println "  Common datoms:" (:common-count comp1))
+                          (println "  Only in Original:" (:only-in-db1-count comp1))
+                          (println "  Only in Datahike-Migrate:" (:only-in-db2-count comp1))
+                          (println "  Match:" (:match? comp1))
+
+                          (is (:match? comp1)
+                              "Original and Datahike-Migrate should match exactly"))
+
+                        ;; Compare Original vs Datacamp
+                        (let [comp2 (compare-databases original-db datacamp-restore-db
+                                                      "Original" "Datacamp")]
+                          (println "\nOriginal vs Datacamp:")
+                          (println "  Common datoms:" (:common-count comp2))
+                          (println "  Only in Original:" (:only-in-db1-count comp2))
+                          (println "  Only in Datacamp:" (:only-in-db2-count comp2))
+                          (println "  Match:" (:match? comp2))
+
+                          (when-not (:match? comp2)
+                            (println "\nSample differences:")
+                            (println "  First 10 only in Original:" (:only-in-db1 comp2))
+                            (println "  First 10 only in Datacamp:" (:only-in-db2 comp2)))
+
+                          (is (:match? comp2)
+                              "Original and Datacamp should match exactly"))
+
+                        ;; Compare Datahike-Migrate vs Datacamp
+                        (let [comp3 (compare-databases datahike-restore-db datacamp-restore-db
+                                                      "Datahike-Migrate" "Datacamp")]
+                          (println "\nDatahike-Migrate vs Datacamp:")
+                          (println "  Common datoms:" (:common-count comp3))
+                          (println "  Only in Datahike-Migrate:" (:only-in-db1-count comp3))
+                          (println "  Only in Datacamp:" (:only-in-db2-count comp3))
+                          (println "  Match:" (:match? comp3))
+
+                          (is (:match? comp3)
+                              "Datahike-Migrate and Datacamp should match exactly"))
+
+                        ;; Test specific queries to verify entity integrity
+                        (println "\n=== Entity Integrity Checks ===")
+
+                        ;; Check companies
+                        (let [orig-companies (d/q '[:find ?name :where [?e :company/name ?name]] original-db)
+                              dh-companies (d/q '[:find ?name :where [?e :company/name ?name]] datahike-restore-db)
+                              dc-companies (d/q '[:find ?name :where [?e :company/name ?name]] datacamp-restore-db)]
+                          (println "Companies:")
+                          (println "  Original:" (count orig-companies) orig-companies)
+                          (println "  Datahike-Migrate:" (count dh-companies))
+                          (println "  Datacamp:" (count dc-companies))
+                          (is (= orig-companies dh-companies dc-companies) "Company data should match"))
+
+                        ;; Check people with manager chains
+                        (let [orig-people (d/q '[:find ?name ?manager-name
+                                                :where
+                                                [?p :person/full-name ?name]
+                                                (or-join [?p ?manager-name]
+                                                  (and [?p :person/manager ?m]
+                                                       [?m :person/full-name ?manager-name])
+                                                  (and [(missing? $ ?p :person/manager)]
+                                                       [(identity "NO MANAGER") ?manager-name]))]
+                                              original-db)
+                              dh-people (d/q '[:find ?name ?manager-name
+                                              :where
+                                              [?p :person/full-name ?name]
+                                              (or-join [?p ?manager-name]
+                                                (and [?p :person/manager ?m]
+                                                     [?m :person/full-name ?manager-name])
+                                                (and [(missing? $ ?p :person/manager)]
+                                                     [(identity "NO MANAGER") ?manager-name]))]
+                                            datahike-restore-db)
+                              dc-people (d/q '[:find ?name ?manager-name
+                                              :where
+                                              [?p :person/full-name ?name]
+                                              (or-join [?p ?manager-name]
+                                                (and [?p :person/manager ?m]
+                                                     [?m :person/full-name ?manager-name])
+                                                (and [(missing? $ ?p :person/manager)]
+                                                     [(identity "NO MANAGER") ?manager-name]))]
+                                            datacamp-restore-db)]
+                          (println "\nPeople with managers:")
+                          (println "  Original:" (count orig-people))
+                          (println "  Datahike-Migrate:" (count dh-people))
+                          (println "  Datacamp:" (count dc-people))
+                          (is (= orig-people dh-people dc-people) "Person/manager relationships should match"))
+
+                        ;; Check orders with line items (component)
+                        (let [orig-orders (d/q '[:find ?num (count ?line)
+                                                :where
+                                                [?o :order/number ?num]
+                                                [?o :order/lines ?line]]
+                                              original-db)
+                              dh-orders (d/q '[:find ?num (count ?line)
+                                              :where
+                                              [?o :order/number ?num]
+                                              [?o :order/lines ?line]]
+                                            datahike-restore-db)
+                              dc-orders (d/q '[:find ?num (count ?line)
+                                              :where
+                                              [?o :order/number ?num]
+                                              [?o :order/lines ?line]]
+                                            datacamp-restore-db)]
+                          (println "\nOrders with line items:")
+                          (println "  Original:" orig-orders)
+                          (println "  Datahike-Migrate:" dh-orders)
+                          (println "  Datacamp:" dc-orders)
+                          (is (= orig-orders dh-orders dc-orders) "Order line items should match"))
+
+                        ;; Check multi-valued attributes
+                        (let [orig-multi (d/q '[:find ?name (count ?email)
+                                               :where
+                                               [?p :person/full-name ?name]
+                                               [?p :person/email ?email]]
+                                             original-db)
+                              dh-multi (d/q '[:find ?name (count ?email)
+                                             :where
+                                             [?p :person/full-name ?name]
+                                             [?p :person/email ?email]]
+                                           datahike-restore-db)
+                              dc-multi (d/q '[:find ?name (count ?email)
+                                             :where
+                                             [?p :person/full-name ?name]
+                                             [?p :person/email ?email]]
+                                           datacamp-restore-db)]
+                          (println "\nMulti-valued emails:")
+                          (println "  Original:" orig-multi)
+                          (println "  Datahike-Migrate:" dh-multi)
+                          (println "  Datacamp:" dc-multi)
+                          (is (= orig-multi dh-multi dc-multi) "Multi-valued attributes should match"))
+
+                        (println "\n=== All tests completed successfully! ===")
+
+                        ;; Cleanup Datacamp restore connection
+                        (d/release datacamp-restore-conn)
+                        (d/delete-database datacamp-restore-cfg)))
+
+                    ;; Cleanup Datahike restore connection
+                    (d/release datahike-restore-conn)
+                    (d/delete-database datahike-restore-cfg))))))
+
+          (finally
+            (d/release original-conn)
+            (d/delete-database original-cfg)))))))
+
+(comment
+  (run-tests 'datacamp.complex-test))
