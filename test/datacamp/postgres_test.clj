@@ -8,21 +8,16 @@
             [datahike-jdbc.core]))
 
 ;; NOTE: These tests require a running PostgreSQL instance
-;; Set environment variables for connection:
-;; - POSTGRES_HOST (default: localhost)
-;; - POSTGRES_PORT (default: 5432)
-;; - POSTGRES_USER (default: postgres)
-;; - POSTGRES_PASSWORD (default: postgres)
-;; - POSTGRES_DB (default: datahike_test)
+;; Connection settings match docker-compose.yml configuration
 
 (def postgres-config
   {:store {:backend :jdbc
            :dbtype "postgresql"
-           :host (or (System/getenv "POSTGRES_HOST") "localhost")
-           :port (Integer/parseInt (or (System/getenv "POSTGRES_PORT") "5432"))
-           :user (or (System/getenv "POSTGRES_USER") "postgres")
-           :password (or (System/getenv "POSTGRES_PASSWORD") "postgres")
-           :dbname (or (System/getenv "POSTGRES_DB") "datahike_test")}
+           :host "localhost"
+           :port 5432
+           :user "postgres"
+           :password "postgres"
+           :dbname "datahike_test"}
    :keep-history? true
    :schema-flexibility :write})
 
@@ -43,6 +38,7 @@
 
 (deftest ^:postgres test-postgres-basic-backup
   (when (postgres-available?)
+    (println "\n=== Running: test-postgres-basic-backup ===")
     (testing "Basic backup with Postgres backend"
       (with-test-dir test-dir
         (let [db-id (str "pg-test-" (java.util.UUID/randomUUID))
@@ -69,6 +65,7 @@
 
 (deftest ^:postgres test-postgres-large-dataset
   (when (postgres-available?)
+    (println "\n=== Running: test-postgres-large-dataset ===")
     (testing "Backup large dataset from Postgres"
       (with-test-dir test-dir
         (let [db-id (str "pg-large-" (java.util.UUID/randomUUID))
@@ -90,6 +87,7 @@
 
 (deftest ^:postgres test-postgres-transactions-during-backup
   (when (postgres-available?)
+    (println "\n=== Running: test-postgres-transactions-during-backup ===")
     (testing "Backup consistency with concurrent transactions"
       (with-test-dir test-dir
         (let [db-id (str "pg-concurrent-" (java.util.UUID/randomUUID))
@@ -123,6 +121,7 @@
 
 (deftest ^:postgres test-postgres-history-queries
   (when (postgres-available?)
+    (println "\n=== Running: test-postgres-history-queries ===")
     (testing "Backup preserves transaction history"
       (with-test-dir test-dir
         (let [db-id (str "pg-history-" (java.util.UUID/randomUUID))
@@ -158,6 +157,7 @@
 
 (deftest ^:postgres test-postgres-connection-pool
   (when (postgres-available?)
+    (println "\n=== Running: test-postgres-connection-pool ===")
     (testing "Multiple connections during backup"
       (with-test-dir test-dir
         (let [db-id (str "pg-pool-" (java.util.UUID/randomUUID))
@@ -184,6 +184,7 @@
 
 (deftest ^:postgres test-postgres-backup-restore-roundtrip
   (when (postgres-available?)
+    (println "\n=== Running: test-postgres-backup-restore-roundtrip ===")
     (testing "Backup and restore roundtrip with Postgres"
       (with-test-dir test-dir
         (let [source-id (str "pg-source-" (java.util.UUID/randomUUID))

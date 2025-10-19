@@ -78,40 +78,146 @@
    :task (p/shell "lein test datacamp.directory-test datacamp.integration-test")}
 
   test:all
-  {:doc "Run all tests (requires databases)"
+  {:doc "Run all tests (starts/stops databases as needed)"
    :task (do
-           (println "Running all tests...")
-           (p/shell "lein test"))}
+           (println "🔍 Checking database status...")
+           (let [pg-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))
+                 mysql-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))
+                 redis-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))
+                 services-to-start (cond-> []
+                                     (not pg-was-running) (conj "postgres")
+                                     (not mysql-was-running) (conj "mysql")
+                                     (not redis-was-running) (conj "redis"))]
+             (when (seq services-to-start)
+               (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
+               (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
+               (println "⏳ Waiting for databases to be healthy...")
+               (Thread/sleep 8000))
+             (println "🧪 Running all tests...\n")
+             (let [result (p/shell {:continue true} "lein test")
+                   services-to-stop (cond-> []
+                                      (not pg-was-running) (conj "postgres")
+                                      (not mysql-was-running) (conj "mysql")
+                                      (not redis-was-running) (conj "redis"))]
+               (when (seq services-to-stop)
+                 (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
+                 (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
 
   test:directory
   {:doc "Run directory tests only"
    :task (p/shell "lein test datacamp.directory-test")}
 
   test:postgres
-  {:doc "Run PostgreSQL tests"
-   :task (p/shell "lein test datacamp.postgres-test")}
+  {:doc "Run PostgreSQL tests (starts/stops postgres as needed)"
+   :task (do
+           (println "🔍 Checking postgres status...")
+           (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))]
+             (when (not was-running)
+               (println "🚀 Starting postgres...")
+               (p/shell "docker-compose up -d postgres")
+               (println "⏳ Waiting for postgres to be healthy...")
+               (Thread/sleep 5000))
+             (println "🧪 Running PostgreSQL tests...\n")
+             (let [result (p/shell {:continue true} "lein test datacamp.postgres-test")]
+               (when (not was-running)
+                 (println "\n⚙️ Stopping postgres...")
+                 (p/shell "docker-compose stop postgres"))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
 
   test:mysql
-  {:doc "Run MySQL tests"
-   :task (p/shell "lein test datacamp.mysql-test")}
+  {:doc "Run MySQL tests (starts/stops mysql as needed)"
+   :task (do
+           (println "🔍 Checking mysql status...")
+           (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))]
+             (when (not was-running)
+               (println "🚀 Starting mysql...")
+               (p/shell "docker-compose up -d mysql")
+               (println "⏳ Waiting for mysql to be healthy...")
+               (Thread/sleep 8000))
+             (println "🧪 Running MySQL tests...\n")
+             (let [result (p/shell {:continue true} "lein test datacamp.mysql-test")]
+               (when (not was-running)
+                 (println "\n⚙️ Stopping mysql...")
+                 (p/shell "docker-compose stop mysql"))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
 
   test:redis
-  {:doc "Run Redis tests"
-   :task (p/shell "lein test datacamp.redis-test")}
+  {:doc "Run Redis tests (starts/stops redis as needed)"
+   :task (do
+           (println "🔍 Checking redis status...")
+           (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))]
+             (when (not was-running)
+               (println "🚀 Starting redis...")
+               (p/shell "docker-compose up -d redis")
+               (println "⏳ Waiting for redis to be healthy...")
+               (Thread/sleep 3000))
+             (println "🧪 Running Redis tests...\n")
+             (let [result (p/shell {:continue true} "lein test datacamp.redis-test")]
+               (when (not was-running)
+                 (println "\n⚙️ Stopping redis...")
+                 (p/shell "docker-compose stop redis"))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
 
   test:integration
   {:doc "Run integration tests"
    :task (p/shell "lein test datacamp.integration-test")}
 
   test:complex
-  {:doc "Run complex schema comparison test (Datahike migrate vs datacamp)"
-   :task (p/shell "lein test datacamp.complex-test")}
+  {:doc "Run complex schema comparison test (starts/stops postgres as needed)"
+   :task (do
+           (println "🔍 Checking postgres status...")
+           (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))]
+             (when (not was-running)
+               (println "🚀 Starting postgres...")
+               (p/shell "docker-compose up -d postgres")
+               (println "⏳ Waiting for postgres to be healthy...")
+               (Thread/sleep 5000))
+             (println "🧪 Running complex schema comparison test...\n")
+             (let [result (p/shell {:continue true} "lein test datacamp.complex-test")]
+               (when (not was-running)
+                 (println "\n⚙️ Stopping postgres...")
+                 (p/shell "docker-compose stop postgres"))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
 
   test:backend
-  {:doc "Run all backend tests (Postgres, MySQL, Redis)"
+  {:doc "Run all backend tests (starts/stops databases as needed)"
    :task (do
-           (println "Running backend tests...")
-           (p/shell "lein test datacamp.postgres-test datacamp.mysql-test datacamp.redis-test"))}
+           (println "🔍 Checking database status...")
+           (let [pg-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))
+                 mysql-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))
+                 redis-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))
+                 services-to-start (cond-> []
+                                     (not pg-was-running) (conj "postgres")
+                                     (not mysql-was-running) (conj "mysql")
+                                     (not redis-was-running) (conj "redis"))]
+             (when (seq services-to-start)
+               (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
+               (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
+               (println "⏳ Waiting for databases to be healthy...")
+               (Thread/sleep 8000))
+             (println "🧪 Running backend tests...\n")
+             (let [result (p/shell {:continue true} "lein test datacamp.postgres-test datacamp.mysql-test datacamp.redis-test")
+                   services-to-stop (cond-> []
+                                      (not pg-was-running) (conj "postgres")
+                                      (not mysql-was-running) (conj "mysql")
+                                      (not redis-was-running) (conj "redis"))]
+               (when (seq services-to-stop)
+                 (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
+                 (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
 
   ;; Combined workflows
   test
@@ -121,7 +227,7 @@
            (Thread/sleep 8000)
            (println "\n🧪 Running tests...\n")
            (let [result (p/shell {:continue true} "lein test")]
-             (println "\n🛑 Stopping databases...")
+             (println "\n⚙️ Stopping databases...")
              (run 'docker:stop)
              (when (not (zero? (:exit result)))
                (System/exit 1))))}

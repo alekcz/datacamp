@@ -8,21 +8,16 @@
             [datahike-jdbc.core]))
 
 ;; NOTE: These tests require a running MySQL instance
-;; Set environment variables for connection:
-;; - MYSQL_HOST (default: localhost)
-;; - MYSQL_PORT (default: 3306)
-;; - MYSQL_USER (default: root)
-;; - MYSQL_PASSWORD (default: password)
-;; - MYSQL_DB (default: datahike_test)
+;; Connection settings match docker-compose.yml configuration
 
 (def mysql-config
   {:store {:backend :jdbc
            :dbtype "mysql"
-           :host (or (System/getenv "MYSQL_HOST") "localhost")
-           :port (Integer/parseInt (or (System/getenv "MYSQL_PORT") "3306"))
-           :user (or (System/getenv "MYSQL_USER") "root")
-           :password (or (System/getenv "MYSQL_PASSWORD") "rootpassword")
-           :dbname (or (System/getenv "MYSQL_DB") "datahike_test")}
+           :host "localhost"
+           :port 3306
+           :user "root"
+           :password "password"
+           :dbname "datahike_test"}
    :keep-history? true
    :schema-flexibility :write})
 
@@ -44,16 +39,20 @@
 (deftest ^:mysql test-mysql-basic-backup
   (when (mysql-available?)
     (testing "Basic backup with MySQL backend"
+      (println "\n=== Running: test-mysql-basic-backup ===")
       (with-test-dir test-dir
         (let [db-id (str "mysql-test-" (java.util.UUID/randomUUID))
               config (assoc mysql-config
                            :store (assoc (:store mysql-config) :id db-id))
               conn (create-test-db config)]
           (try
+            (println "  Populating test database (20 users, 40 posts)...")
             (populate-test-db conn :user-count 20 :post-count 40)
 
+            (println "  Performing backup...")
             (let [result (backup/backup-to-directory conn {:path test-dir}
                                                     :database-id db-id)]
+              (println "  Validating backup...")
               (assert-backup-successful result)
               (assert-backup-valid (:path result))
 
@@ -63,6 +62,7 @@
                     actual-datoms (count (d/datoms @conn :eavt))]
                 (is (= actual-datoms (:stats/datom-count manifest))
                     "Datom count should match")))
+            (println "  ✓ Test completed successfully")
 
             (finally
               (cleanup-test-db config))))))))
@@ -70,6 +70,7 @@
 (deftest ^:mysql test-mysql-large-dataset
   (when (mysql-available?)
     (testing "Backup large dataset from MySQL"
+      (println "\n=== Running: test-mysql-large-dataset ===")
       (with-test-dir test-dir
         (let [db-id (str "mysql-large-" (java.util.UUID/randomUUID))
               config (assoc mysql-config
@@ -90,6 +91,7 @@
 
 (deftest ^:mysql test-mysql-utf8-support
   (when (mysql-available?)
+    (println "\n=== Running: test-mysql-utf8-support ===")
     (testing "MySQL UTF-8 character support"
       (with-test-dir test-dir
         (let [db-id (str "mysql-utf8-" (java.util.UUID/randomUUID))
@@ -121,6 +123,7 @@
 
 (deftest ^:mysql test-mysql-transactions
   (when (mysql-available?)
+    (println "\n=== Running: test-mysql-transactions ===")
     (testing "MySQL transaction handling during backup"
       (with-test-dir test-dir
         (let [db-id (str "mysql-tx-" (java.util.UUID/randomUUID))
@@ -149,6 +152,7 @@
 
 (deftest ^:mysql test-mysql-multiple-databases
   (when (mysql-available?)
+    (println "\n=== Running: test-mysql-multiple-databases ===")
     (testing "Multiple MySQL databases backup"
       (with-test-dir test-dir
         (let [db-id-1 (str "mysql-multi-1-" (java.util.UUID/randomUUID))
@@ -179,6 +183,7 @@
 
 (deftest ^:mysql test-mysql-performance
   (when (mysql-available?)
+    (println "\n=== Running: test-mysql-performance ===")
     (testing "MySQL backup performance"
       (with-test-dir test-dir
         (let [db-id (str "mysql-perf-" (java.util.UUID/randomUUID))
