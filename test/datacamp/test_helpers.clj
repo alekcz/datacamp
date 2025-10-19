@@ -12,7 +12,7 @@
            [java.util UUID]))
 
 ;; Set default log level to :warn for tests to reduce noise
-(timbre/set-level! :warn)
+(timbre/set-level! :error)
 
 ;; =============================================================================
 ;; Test Data Generators

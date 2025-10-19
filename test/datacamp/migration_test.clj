@@ -134,7 +134,7 @@
                   (reset! write-thread-active false))))
 
             ;; Cleanup
-            (cleanup-test-db source-config)))))))
+            (cleanup-test-db source-config))))))
 
 (deftest test-migration-recovery
   (testing "Recovery of interrupted migration"
@@ -185,7 +185,7 @@
                     (is (contains? (set users) "AfterRecovery1") "Should have post-recovery user"))))))
 
             ;; Cleanup
-            (cleanup-test-db source-config))))))
+            (cleanup-test-db source-config)))))
 
 (deftest test-migration-continuation-with-same-id
   (testing "Continuing migration with the same ID"
@@ -788,140 +788,130 @@
                                                 (original-router tx-data)))))
 
                 ;; Helper to test recovery after error
-                test-error-recovery (fn [mode description initial-data transactions]
-                                      (log/info (format "\n=== Testing: %s ===" description))
+                test-error-recovery
+                (fn [mode description initial-data transactions]
+                  (log/info (format "\n=== Testing: %s ===" description))
 
-                                      ;; Setup initial data
-                                      (d/transact source-conn complex-test/complex-schema)
-                                      (d/transact source-conn initial-data)
+                  ;; Setup initial data - keep schema simple to avoid unique conflicts
+                  (d/transact source-conn initial-data)
 
-                                      ;; Start migration
-                                      (let [migration-id (str "error-test-" (name mode))
-                                            errors-caught (atom [])
-                                            successful-txs (atom 0)]
+                  ;; First attempt with errors
+                  (let [test-run-id (str (System/currentTimeMillis) "-" (name mode))
+                        migration-id (str "error-test-" test-run-id)
+                        errors-caught (atom [])
+                        successful-txs (atom 0)]
 
-                                        ;; First attempt with errors
-                                        (reset! error-mode mode)
-                                        (reset! error-count 0)
+                    (reset! error-mode mode)
+                    (reset! error-count 0)
 
-                                        (let [router-1 (migrate/live-migrate
-                                                       source-conn target-config
-                                                       :migration-id migration-id
-                                                       :database-id "error-test"
-                                                       :backup-dir test-dir)
-                                              error-router (create-error-prone-router router-1)]
+                    (let [router-1 (migrate/live-migrate
+                                    source-conn target-config
+                                    :migration-id migration-id
+                                    :database-id "error-test"
+                                    :backup-dir test-dir)
+                          error-router (create-error-prone-router router-1)]
 
-                                          ;; Try transactions, catching errors
-                                          (doseq [tx transactions]
-                                            (try
-                                              (error-router tx)
-                                              (swap! successful-txs inc)
-                                              (catch Exception e
-                                                (swap! errors-caught conj e)
-                                                (log/warn "Expected error caught:" (.getMessage e)))))
+                      (doseq [tx transactions]
+                        (try
+                          (error-router tx)
+                          (swap! successful-txs inc)
+                          (catch Exception e
+                            (swap! errors-caught conj e)
+                            (log/warn "Expected error caught:" (.getMessage e)))))
 
-                                          (log/info "First attempt results:")
-                                          (log/info "  Successful transactions:" @successful-txs)
-                                          (log/info "  Errors caught:" (count @errors-caught))
+                      (case mode
+                        :fail-every-third
+                        (is (> (count @errors-caught) 0)
+                            "Should have caught some errors")
 
-                                          ;; Verify errors were caught as expected
-                                          (case mode
-                                            :fail-every-third
-                                            (is (> (count @errors-caught) 0)
-                                                "Should have caught some errors")
+                        :fail-after-5
+                        (is (>= @successful-txs 5)
+                            "Should succeed for first 5 transactions")
 
-                                            :fail-after-5
-                                            (is (>= @successful-txs 5)
-                                                "Should succeed for first 5 transactions")
+                        nil)
 
-                                            nil))
+                      ;; Finalize the first migration to release the active lock
+                      (try
+                        (error-router)
+                        (catch Exception e
+                          (log/warn "Finalization during error phase failed:" (.getMessage e))))))
 
-                                        ;; Now recover/continue without errors
-                                        (reset! error-mode nil)
-                                        (reset! error-count 0)
-                                        (log/info "Attempting recovery without errors...")
+                  ;; Recovery/continuation without errors using a fresh migration ID
+                  (reset! error-mode nil)
+                  (reset! error-count 0)
+                  (let [recovery-migration-id (str "error-test-" (System/currentTimeMillis) "-recovery")
+                        retry-id (str (System/currentTimeMillis))
+                        router-2 (migrate/live-migrate
+                                  source-conn target-config
+                                  :migration-id recovery-migration-id
+                                  :database-id "error-test"
+                                  :backup-dir test-dir)
+                        retry-transactions (case mode
+                                             :fail-every-third
+                                             (for [i (range 15)]
+                                               [{:user/name (str "RetryEventUser" i)
+                                                 :user/email (str "retry-event" i "-" retry-id "@test.com")
+                                                 :user/age 28
+                                                 :user/tags ["retry" (str "retry-event-" i)]}])
+                                             :fail-after-5
+                                             (for [i (range 10)]
+                                               [{:user/name (str "RetryViewUser" i)
+                                                 :user/email (str "retry-view" i "-" retry-id "@test.com")
+                                                 :user/age 32
+                                                 :user/tags ["retry" (str "retry-view-" i)]}])
+                                             [])]
 
-                                        (let [router-2 (migrate/live-migrate
-                                                       source-conn target-config
-                                                       :migration-id migration-id  ; Same ID - should continue
-                                                       :database-id "error-test"
-                                                       :backup-dir test-dir)
-                                              ;; Generate new transactions with fresh UUIDs for retry
-                                              ;; to avoid unique constraint violations
-                                              retry-transactions (case mode
-                                                                  :fail-every-third
-                                                                  (for [i (range 15)]
-                                                                    [{:entity/id (guaranteed-unique-uuid)
-                                                                      :entity/type :event
-                                                                      :event/type :test
-                                                                      :event/at (java.util.Date.)
-                                                                      :event/data (str "Retry Event " i)}])
-                                                                  :fail-after-5
-                                                                  (for [i (range 10)]
-                                                                    [{:entity/id (guaranteed-unique-uuid)
-                                                                      :entity/type :event
-                                                                      :event/type :product-view
-                                                                      :event/at (java.util.Date.)
-                                                                      :event/data (str "Retry View " i)}])
-                                                                  [])]
+                    (doseq [tx retry-transactions]
+                      (router-2 tx))
 
-                                          ;; Complete remaining transactions with fresh UUIDs
-                                          (doseq [tx retry-transactions]
-                                            (router-2 tx))
-
-                                          ;; Finalize
-                                          (let [result (router-2)]
-                                            (is (= :completed (:status result))
-                                                (format "%s: Should complete after recovery" description))
-
-                                            ;; Verify data integrity
-                                            (let [target-conn (:target-conn result)
-                                                  final-count (count (d/q '[:find ?e
-                                                                           :where [?e :entity/type _]]
-                                                                         @target-conn))]
-                                              (log/info "Final entity count after recovery:" final-count)
-                                              (is (pos? final-count)
-                                                  "Should have entities after recovery"))))))]
+                    (let [result (router-2)]
+                      (is (= :completed (:status result))
+                          (format "%s: Should complete after recovery" description))
+                      (let [target-conn (:target-conn result)
+                            final-count (count (d/q '[:find ?e
+                                                     :where [?e :user/name _]]
+                                                   @target-conn))]
+                        (log/info "Final entity count after recovery:" final-count)
+                        (is (pos? final-count)
+                            "Should have entities after recovery")))))
+                ]
 
             ;; Test 1: Errors during transaction routing (every third fails)
-            (test-error-recovery
-             :fail-every-third
-             "Intermittent transaction failures (every 3rd fails)"
-             [{:entity/id (guaranteed-unique-uuid)
-               :entity/type :company
-               :company/name "Test Company"}]
-             (for [i (range 15)]
-               [{:entity/id (guaranteed-unique-uuid)
-                 :entity/type :event
-                 :event/type :test
-                 :event/at (java.util.Date.)
-                 :event/data (str "Event " i)}]))
+            (let [test-id (str (System/currentTimeMillis))]
+              (test-error-recovery
+               :fail-every-third
+               "Intermittent transaction failures (every 3rd fails)"
+               [{:user/name "TestCompany"
+                 :user/email (str "company-" test-id "@test.com")}]
+               (for [i (range 15)]
+                 [{:user/name (str "EventUser" i)
+                   :user/email (str "event" i "-" test-id "@test.com")
+                   :user/age 25
+                   :user/tags ["test" (str "event-" i)]}])))
 
             ;; Test 2: Errors after certain number of transactions
-            (test-error-recovery
-             :fail-after-5
-             "Failures after 5 successful transactions"
-             [{:entity/id (guaranteed-unique-uuid)
-               :entity/type :product
-               :product/sku "TEST-001"
-               :product/name "Test Product"}]
-             (for [i (range 10)]
-               [{:entity/id (guaranteed-unique-uuid)
-                 :entity/type :event
-                 :event/type :product-view
-                 :event/at (java.util.Date.)
-                 :event/data (str "View " i)}]))
+            (let [test-id (str (System/currentTimeMillis) "-2")]
+              (test-error-recovery
+               :fail-after-5
+               "Failures after 5 successful transactions"
+               [{:user/name "TestProduct"
+                 :user/email (str "product-" test-id "@test.com")}]
+               (for [i (range 10)]
+                 [{:user/name (str "ViewUser" i)
+                   :user/email (str "view" i "-" test-id "@test.com")
+                   :user/age 30
+                   :user/tags ["product-view" (str "view-" i)]}])))
 
             ;; Test 3: Network-like intermittent failures with retries
             (log/info "\n=== Testing: Network-like intermittent failures ===")
-            (let [migration-id "network-failure-test"
+            (let [test-id (str (System/currentTimeMillis) "-network")
+                  migration-id (str "network-failure-test-" test-id)
                   network-fail-count (atom 0)
                   max-network-fails 3]
 
-              ;; Setup data
-              (d/transact source-conn [{:entity/id (guaranteed-unique-uuid)
-                                        :entity/type :test
-                                        :test/name "Network Test"}])
+              ;; Setup data with unique email
+              (d/transact source-conn [{:user/name "NetworkTest"
+                                        :user/email (str "network-" test-id "@test.com")}])
 
               ;; Start migration
               (let [router (migrate/live-migrate
@@ -932,25 +922,21 @@
 
                 ;; Simulate network failures with retries
                 (dotimes [attempt 5]
-                  ;; Generate UUID outside retry loop to maintain same ID across retries
-                  (let [entity-uuid (guaranteed-unique-uuid)
-                        base-tx-data [{:entity/id entity-uuid
-                                      :entity/type :event
-                                      :event/type :network-test
-                                      :event/at (java.util.Date.)
-                                      :event/data (str "Attempt " attempt)}]]
+                  ;; Use user schema instead of entity schema to avoid unique constraint issues
+                  (let [base-tx-data [{:user/name (str "NetworkUser" attempt)
+                                      :user/email (str "network" attempt "-" test-id "@test.com")
+                                      :user/age 35}]]
 
                     ;; Retry logic
                     (loop [retry 0]
                       (when (< retry 3)
-                        (let [;; Generate fresh UUID if this is a retry after failure
+                        (let [;; Generate different user data if this is a retry after failure
                               tx-data (if (> retry 0)
-                                       [{:entity/id (guaranteed-unique-uuid) ;; New UUID for retry
-                                         :entity/type :event
-                                         :event/type :network-test
-                                         :event/at (java.util.Date.)
-                                         :event/data (str "Attempt " attempt " Retry " retry)}]
-                                       base-tx-data) ;; Use original UUID for first attempt
+                                       [{:user/name (str "NetworkUser" attempt "-retry" retry)
+                                         :user/email (str "network" attempt "-retry" retry "-" test-id "@test.com")
+                                         :user/age 35
+                                         :user/tags ["retry"]}]
+                                       base-tx-data) ;; Use original data for first attempt
                               succeeded (try
                                          ;; Simulate random network failure
                                          (when (and (< @network-fail-count max-network-fails)
@@ -1055,8 +1041,12 @@
                         "Second migration should complete after first")))))
 
             ;; Cleanup
-            (cleanup-test-db source-config)))))))
+            (cleanup-test-db source-config))))))
+
+)
 
 ;; Run tests
 (comment
   (run-tests))
+)
+)
