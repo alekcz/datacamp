@@ -1,5 +1,5 @@
 (defproject org.alekcz/datacamp "0.1.0-SNAPSHOT"
-  :description "Datahike S3 Backup Library - Production-ready backup solution with streaming, resumable operations, and live sync"
+  :description "Datahike Backup Library - Production-ready backup solution with streaming, resumable operations, and live sync"
   :url "https://github.com/alekcz/datacamp"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}

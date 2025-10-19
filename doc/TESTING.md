@@ -35,6 +35,9 @@ bb test:quick
 # All tests
 bb test:all
 
+# Code coverage analysis
+bb coverage          # Runs all tests with coverage report
+
 # Specific test suites
 bb test:directory    # Directory tests only
 bb test:postgres     # PostgreSQL tests only

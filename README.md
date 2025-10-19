@@ -22,10 +22,10 @@ Add to your `project.clj` or `deps.edn`:
 
 ```clojure
 ;; Leiningen
-[datacamp "0.1.0-SNAPSHOT"]
+[org.alekcz/datacamp "0.1.0-SNAPSHOT"]
 
 ;; deps.edn
-{:deps {datacamp {:mvn/version "0.1.0-SNAPSHOT"}}}
+{:deps {org.alekcz/datacamp {:mvn/version "0.1.0-SNAPSHOT"}}}
 ```
 
 ## Quick Start
@@ -264,7 +264,7 @@ Current release includes full backup, restore (S3 and directory), and live migra
 - Encryption at rest/in transit
 - Cloud‑native operational tooling and metrics
 
-See the full specification in [doc/spec.temp.md](doc/spec.temp.md).
+See the full specification in [doc/SPEC.md](doc/SPEC.md) and design rationale in [doc/RATIONALE.md](doc/RATIONALE.md).
 
 ## Requirements
 
@@ -298,21 +298,75 @@ The library includes comprehensive error handling:
 - **S3 Throttling**: Rate limiting and backoff
 - **Serialization Errors**: Logged and skipped (continues backup)
 
+## Documentation
+
+Comprehensive documentation is available in the [`doc/`](doc/) directory:
+
+### For Users
+
+- **[Quick Start Guide](doc/QUICKSTART.md)** - Get up and running in 5 minutes
+  - Installation and basic usage
+  - Common operations and workflows
+  - S3-compatible storage configuration
+  - Example code and troubleshooting
+
+### For Developers and Maintainers
+
+- **[Architecture Rationale](doc/RATIONALE.md)** - Deep dive into design decisions
+  - Problems Datacamp solves
+  - Core design principles and trade-offs
+  - Critical design decisions explained
+  - Memory management strategy
+  - Backup/restore data flow
+  - Live migration architecture
+  - Error handling and safety mechanisms
+
+- **[Technical Specification](doc/SPEC.md)** - Complete implementation specification
+  - Architecture overview and component design
+  - Backup format specification
+  - Streaming algorithms and memory management
+  - API contracts and error handling
+  - Performance characteristics
+  - Complete enough for alternative language implementations
+
+### For Testing
+
+- **[Testing Guide](doc/TESTING.md)** - Quick reference for running tests
+  - Docker Compose setup
+  - Babashka task reference
+  - Backend-specific test instructions
+  - Troubleshooting test failures
+
+- **[Test Strategy](doc/TESTSTRATEGY.md)** - Comprehensive testing documentation
+  - Testing philosophy and approach
+  - Test coverage by component (all 49 tests explained)
+  - Test infrastructure and helpers
+  - Writing new tests
+  - Debugging strategies
+
 ## Testing
 
-See TESTING.md for end‑to‑end and backend‑specific instructions (Babashka tasks and Docker Compose).
+Quick test commands (see [doc/TESTING.md](doc/TESTING.md) for full details):
 
 ```bash
 # Quick tests (no external services)
 bb test:quick
 
 # All tests (starts/stops services as needed)
-bb test:with-docker
+bb test:all
+
+# Code coverage
+bb coverage
 ```
 
 ## Contributing
 
-Contributions are welcome! Please see the [spec document](doc/spec.md) for the full architecture and design decisions.
+Contributions are welcome! Before contributing:
+
+1. Read the [Architecture Rationale](doc/RATIONALE.md) to understand design decisions
+2. Review the [Technical Specification](doc/SPEC.md) for implementation details
+3. Check the [Test Strategy](doc/TESTSTRATEGY.md) to understand testing approach
+4. Run the full test suite to ensure everything works
 
 ## License
 
@@ -333,7 +387,7 @@ at https://www.gnu.org/software/classpath/license.html.
 
 For issues and questions:
 - GitHub Issues: https://github.com/alekcz/datacamp/issues
-- See [doc/spec.md](doc/spec.md) for detailed documentation
+- See [documentation](doc/) for detailed guides and specifications
 
 ## Acknowledgments
 

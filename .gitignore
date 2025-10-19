@@ -23,3 +23,6 @@ pom.xml.asc
 
 # Docker
 .docker-data
+
+.DS_Store
+*/.DS_Store

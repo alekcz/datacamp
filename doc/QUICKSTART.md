@@ -14,13 +14,13 @@ Get started with Datacamp in 5 minutes!
 Add to your `project.clj`:
 
 ```clojure
-[datacamp "0.1.0-SNAPSHOT"]
+[org.alekcz/datacamp "0.1.0-SNAPSHOT"]
 ```
 
 Or `deps.edn`:
 
 ```clojure
-{:deps {datacamp {:mvn/version "0.1.0-SNAPSHOT"}}}
+{:deps {org.alekcz/datacamp {:mvn/version "0.1.0-SNAPSHOT"}}}
 ```
 
 ## Basic Usage
@@ -379,15 +379,16 @@ Typical performance characteristics:
 
 ## Next Steps
 
-- See [examples/basic_usage.clj](examples/basic_usage.clj) for more examples
-- See [examples/advanced_usage.clj](examples/advanced_usage.clj) for advanced patterns
-- Read the [full specification](doc/spec.temp.md) for architecture details
-- Check [README.md](README.md) for complete documentation
+- See [examples/basic_usage.clj](../examples/basic_usage.clj) for more examples
+- See [examples/advanced_usage.clj](../examples/advanced_usage.clj) for advanced patterns
+- Read the [Architecture Rationale](RATIONALE.md) to understand design decisions
+- Read the [Technical Specification](SPEC.md) for complete implementation details
+- Check [README.md](../README.md) for overview documentation
 
 ## Getting Help
 
 - Issues: https://github.com/alekcz/datacamp/issues
-- Documentation: [doc/spec.md](doc/spec.md)
+- Full Documentation: [doc/](.) directory
 
 ## What's Next?
 
