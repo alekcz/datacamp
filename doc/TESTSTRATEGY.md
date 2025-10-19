@@ -1083,7 +1083,7 @@ Datacamp uses GitHub Actions for automated testing and continuous integration. E
 ### Current CI Status
 
 [![Tests](https://github.com/alekcz/datacamp/actions/workflows/test.yml/badge.svg)](https://github.com/alekcz/datacamp/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/alekcz/datacamp/branch/main/graph/badge.svg)](https://codecov.io/gh/alekcz/datacamp)
+[![codecov](https://codecov.io/gh/alekcz/datacamp/branch/master/graph/badge.svg)](https://codecov.io/gh/alekcz/datacamp)
 
 ### CI Workflow
 

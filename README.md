@@ -1,7 +1,7 @@
 # Datacamp - Datahike Backup, Restore, and Live Migration
 
 [![Tests](https://github.com/alekcz/datacamp/actions/workflows/test.yml/badge.svg)](https://github.com/alekcz/datacamp/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/alekcz/datacamp/branch/main/graph/badge.svg)](https://codecov.io/gh/alekcz/datacamp)
+[![codecov](https://codecov.io/gh/alekcz/datacamp/branch/master/graph/badge.svg)](https://codecov.io/gh/alekcz/datacamp)
 [![Clojars Project](https://img.shields.io/clojars/v/org.alekcz/datacamp.svg)](https://clojars.org/org.alekcz/datacamp)
 [![License](https://img.shields.io/badge/License-EPL%202.0-blue.svg)](https://www.eclipse.org/legal/epl-2.0/)
 
