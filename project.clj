@@ -3,6 +3,12 @@
   :url "https://github.com/alekcz/datacamp"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
+
+  ;; Java compatibility settings
+  :min-lein-version "2.9.0"
+  :javac-options ["-target" "11" "-source" "11"]
+  :jvm-opts ["-Dclojure.spec.skip-macros=true"]
+
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [io.replikativ/datahike "0.6.1607"]
                  [com.cognitect.aws/api "0.8.774"]

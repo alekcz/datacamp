@@ -8,8 +8,13 @@ on:
 
 jobs:
   test:
-    name: Run Tests
+    name: Test Java ${{ matrix.java }}
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['11', '17', '21']
 
     services:
       postgres:
@@ -68,11 +73,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java ${{ matrix.java }}
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: ${{ matrix.java }}
 
       - name: Install Leiningen
         run: |
@@ -139,6 +144,7 @@ jobs:
           MINIO_SECRET_KEY: minioadmin
 
       - name: Generate coverage report
+        if: matrix.java == '17'
         run: lein cloverage --codecov
         env:
           POSTGRES_HOST: localhost
@@ -158,6 +164,7 @@ jobs:
           MINIO_SECRET_KEY: minioadmin
 
       - name: Upload coverage to Codecov
+        if: matrix.java == '17'
         uses: codecov/codecov-action@v4
         with:
           file: ./target/coverage/codecov.json
@@ -170,12 +177,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: test-results-java-${{ matrix.java }}
           path: target/test-results.txt
           if-no-files-found: ignore
 
       - name: Upload coverage report
-        if: always()
+        if: always() && matrix.java == '17'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report

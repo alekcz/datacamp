@@ -4,10 +4,13 @@ Get started with Datacamp in 5 minutes!
 
 ## Prerequisites
 
-1. A Datahike database
-2. For S3 backups: AWS credentials configured (environment variables, `~/.aws/credentials`, or IAM role)
-3. For S3 backups: An S3 bucket (or S3-compatible storage)
-4. For directory backups: A local directory or mounted network storage
+1. **Java 11 or higher** (Java 11, 17, or 21 recommended)
+2. A Datahike database
+3. For S3 backups: AWS credentials configured (environment variables, `~/.aws/credentials`, or IAM role)
+4. For S3 backups: An S3 bucket (or S3-compatible storage)
+5. For directory backups: A local directory or mounted network storage
+
+**Note**: Datacamp is compiled for Java 11 bytecode compatibility and tested against Java 11, 17, and 21.
 
 ## Installation
 

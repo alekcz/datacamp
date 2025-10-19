@@ -375,12 +375,14 @@ Datacamp uses GitHub Actions for continuous integration and testing. The CI pipe
 
 The CI workflow is defined in [`.github/workflows/test.yml`](../.github/workflows/test.yml) and includes:
 
-1. **Service Setup**: PostgreSQL, MySQL, Redis, and MinIO containers
-2. **Java & Leiningen**: Java 17 with Leiningen build tool
+1. **Matrix Testing**: Tests run against Java 11, 17, and 21 for broad compatibility
+2. **Service Setup**: PostgreSQL, MySQL, Redis, and MinIO containers
 3. **Dependency Caching**: Maven repository caching for faster builds
-4. **Test Execution**: Full test suite with all backends
-5. **Coverage Generation**: Cloverage report with Codecov integration
-6. **Artifact Upload**: Test results and coverage reports
+4. **Test Execution**: Full test suite with all backends on each Java version
+5. **Coverage Generation**: Cloverage report (Java 17 only) with Codecov integration
+6. **Artifact Upload**: Test results for each Java version and coverage reports
+
+**Java Compatibility**: The matrix strategy ensures Datacamp works on Java 11+ (LTS versions 11, 17, and 21).
 
 ### Running Locally Like CI
 

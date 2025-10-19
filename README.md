@@ -273,9 +273,12 @@ See the full specification in [doc/SPEC.md](doc/SPEC.md) and design rationale in
 
 ## Requirements
 
-- Clojure 1.11.1 or higher
-- Datahike 0.6.1 or higher
-- AWS credentials configured (via environment variables, ~/.aws/credentials, or IAM roles)
+- **Java**: 11, 17, or 21 (compiled for Java 11 bytecode compatibility)
+- **Clojure**: 1.11.1 or higher
+- **Datahike**: 0.6.1 or higher
+- **AWS credentials**: Configured via environment variables, ~/.aws/credentials, or IAM roles (for S3 backups)
+
+Datacamp is tested against Java 11, 17, and 21 to ensure broad compatibility. The library is compiled with Java 11 target bytecode, making it compatible with Java 11+ environments.
 
 ## AWS Credentials
 
