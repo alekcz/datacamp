@@ -1,5 +1,5 @@
 (ns datacamp.core
-  "Public API for Datahike backup operations"
+  "Public API for Datahike backup and migration operations"
   (:require [datahike.api :as d]
             [taoensso.timbre :as log]
             [datacamp.s3 :as s3]
@@ -870,3 +870,175 @@
                            {:path "/path/to/backups"}
                            "backup-20240115-123456-abc"
                            :database-id "test-db")))
+
+;; =============================================================================
+;; Live Migration API
+;; =============================================================================
+
+(defn live-migrate
+  "Perform zero-downtime live migration between database backends.
+
+  This function enables migrating data from one Datahike database configuration
+  to another while the application continues to operate. It handles:
+  - Creating an initial backup while capturing new transactions
+  - Restoring to the target database
+  - Replaying captured transactions to catch up
+  - Providing a router function for seamless switchover
+
+  Parameters:
+  - source-conn: Current database connection
+  - target-config: Configuration for target database
+  - opts: Migration options
+    :migration-id - Specific migration ID (optional, continues if exists)
+    :database-id - Database identifier (default: \"default-db\")
+    :backup-dir - Directory for backups and migration state (default: \"./backups\")
+    :progress-fn - Function called with progress updates
+    :complete-callback - Function called when migration completes
+    :verify-transactions - Verify each transaction was captured (default: true)
+
+  Returns:
+  A transaction router function that should be used for all database writes.
+  Call this function with transaction data to route writes appropriately.
+  Call with no arguments to finalize the migration and switch to the target.
+
+  Example:
+  ```clojure
+  ;; Start migration
+  (def router (live-migrate source-conn target-config
+                           :database-id \"prod-db\"
+                           :backup-dir \"./migrations\"))
+
+  ;; Continue transacting through the router
+  (router [{:user/name \"Alice\"}])
+  (router [{:user/name \"Bob\"}])
+
+  ;; When ready to switch over (minimal downtime here)
+  (let [result (router)]
+    ;; result contains :target-conn with the new connection
+    (def new-conn (:target-conn result)))
+  ```"
+  [source-conn target-config & opts]
+  (let [migrate-fn (requiring-resolve 'datacamp.migration/live-migrate)]
+    (apply migrate-fn source-conn target-config opts)))
+
+(defn recover-migration
+  "Recover an interrupted migration and continue from where it left off.
+
+  If a migration was interrupted (e.g., server restart), this function
+  can resume it from the last checkpoint.
+
+  Parameters:
+  - backup-dir: Directory containing migration state
+  - database-id: Database identifier
+  - opts: Recovery options
+    :progress-fn - Function called with progress updates
+    :complete-callback - Function called when migration completes
+
+  Returns:
+  - If migration found and resumed: Router function to continue migration
+  - If migration completed: Map with :status :already-completed and :target-conn
+  - If no migration: Map with :status :no-migration
+
+  Example:
+  ```clojure
+  ;; Check for and recover any interrupted migration
+  (let [result (recover-migration \"./migrations\" \"prod-db\")]
+    (if (fn? result)
+      ;; Migration resumed, use router
+      (do
+        (result [{:data \"new-transaction\"}])
+        (result))  ; Finalize
+      ;; Check status
+      (println \"Recovery status:\" (:status result))))
+  ```"
+  [backup-dir database-id & opts]
+  (let [recover-fn (requiring-resolve 'datacamp.migration/recover-migration)]
+    (apply recover-fn backup-dir database-id opts)))
+
+(defn get-migration-status
+  "Get the current status of a migration.
+
+  Parameters:
+  - backup-dir: Directory containing migration state
+  - database-id: Database identifier
+  - migration-id: Specific migration ID to check
+
+  Returns:
+  Map with migration status including:
+  - :status - :found or :not-found
+  - :state - Current migration state
+  - :started-at - When migration started
+  - :completed-at - When migration completed (if applicable)
+  - :stats - Migration statistics
+
+  Example:
+  ```clojure
+  (get-migration-status \"./migrations\" \"prod-db\" \"migration-123\")
+  ;; => {:status :found
+  ;;     :state :catching-up
+  ;;     :started-at #inst \"2024-01-15T10:00:00\"
+  ;;     :stats {:transactions-captured 150
+  ;;             :transactions-applied 120}}
+  ```"
+  [backup-dir database-id migration-id]
+  (let [status-fn (requiring-resolve 'datacamp.migration/get-migration-status)]
+    (status-fn backup-dir database-id migration-id)))
+
+(defn archive-completed-migrations
+  "Archive completed migrations older than specified hours.
+  Migrations are marked as archived but kept as they serve as backups.
+
+  Parameters:
+  - backup-dir: Directory containing migration state
+  - database-id: Database identifier
+  - opts:
+    :older-than-hours - Archive migrations older than this (default: 168 / 1 week)
+
+  Returns:
+  Map with archive results:
+  - :archived-count - Number of migrations archived
+  - :migration-ids - IDs of archived migrations
+
+  Example:
+  ```clojure
+  (archive-completed-migrations \"./migrations\" \"prod-db\"
+                                :older-than-hours 24)
+  ;; => {:archived-count 3
+  ;;     :migration-ids [\"migration-123\" \"migration-456\" \"migration-789\"]}
+  ```"
+  [backup-dir database-id & opts]
+  (let [archive-fn (requiring-resolve 'datacamp.migration/archive-completed-migrations)]
+    (apply archive-fn backup-dir database-id opts)))
+
+(defn cleanup-completed-migrations
+  "Deprecated: Use archive-completed-migrations instead.
+  This function now archives migrations instead of deleting them."
+  [backup-dir database-id & opts]
+  (let [cleanup-fn (requiring-resolve 'datacamp.migration/cleanup-completed-migrations)]
+    (apply cleanup-fn backup-dir database-id opts)))
+
+(defn list-migrations
+  "List all migrations for a database.
+
+  Parameters:
+  - backup-dir: Directory containing migration state
+  - database-id: Database identifier
+  - opts:
+    :include-archived - Include archived migrations (default: true)
+
+  Returns:
+  List of migration summaries sorted by start time (newest first)
+
+  Example:
+  ```clojure
+  (list-migrations \"./migrations\" \"prod-db\")
+  ;; => [{:migration-id \"migration-123\"
+  ;;      :state :completed
+  ;;      :started-at #inst \"2024-01-15T10:00:00\"
+  ;;      :completed-at #inst \"2024-01-15T10:05:00\"
+  ;;      :backup-id \"backup-456\"}
+  ;;     ...]
+  ```"
+  [backup-dir database-id & opts]
+  (let [list-fn (requiring-resolve 'datacamp.migration/list-migrations)]
+    (apply list-fn backup-dir database-id opts)))

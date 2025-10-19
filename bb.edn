@@ -189,6 +189,38 @@
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
+  test:migration
+  {:doc "Run migration tests including complex and error scenarios"
+   :task (do
+           (println "🚀 Running migration tests...")
+           (println "This includes:")
+           (println "  • Basic migration scenarios")
+           (println "  • Complex migration with 120k entities")
+           (println "  • Error handling and recovery tests")
+           (println "  • Concurrent migration tests\n")
+           (p/shell "lein test datacamp.migration-test"))}
+
+  test:migration:complex
+  {:doc "Run only the complex migration test with 120k entities"
+   :task (do
+           (println "🚀 Running complex migration test with 120k entities...")
+           (println "This test will:")
+           (println "  • Create 20,000 initial entities")
+           (println "  • Write 10,000 entities/second for 10 seconds during migration")
+           (println "  • Verify all 121,000+ entities are migrated correctly\n")
+           (p/shell "lein test :only datacamp.migration-test/test-complex-migration-with-continuous-writes"))}
+
+  test:migration:errors
+  {:doc "Run only the migration error handling tests"
+   :task (do
+           (println "🚀 Running migration error handling tests...")
+           (println "This test validates:")
+           (println "  • Recovery from intermittent failures")
+           (println "  • Network-like failures with retries")
+           (println "  • State corruption recovery")
+           (println "  • Concurrent migration blocking\n")
+           (p/shell "lein test :only datacamp.migration-test/test-migration-error-handling"))}
+
 
   test:backend
   {:doc "Run all backend tests (starts/stops databases as needed)"
@@ -281,6 +313,9 @@
            (println "  bb test:backend    - All backend tests")
            (println "  bb test:integration - Integration tests")
            (println "  bb test:complex    - Complex schema comparison test")
+           (println "  bb test:migration  - Migration tests (all scenarios)")
+           (println "  bb test:migration:complex - Complex migration (120k entities)")
+           (println "  bb test:migration:errors  - Error handling tests")
            (println "\nDevelopment:")
            (println "  bb repl            - Start REPL")
            (println "  bb clean           - Clean build artifacts")
