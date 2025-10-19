@@ -3,11 +3,17 @@
   :requires ([babashka.process :as p]
              [clojure.string :as str])
 
+  ;; Helper to detect docker compose command (v1 vs v2)
+  :init (def docker-compose-cmd
+          (if (zero? (:exit (p/shell {:out :string :err :string :continue true} "docker compose version")))
+            "docker compose"
+            "docker-compose"))
+
   docker:start
   {:doc "Start test database environment"
    :task (do
            (println "🚀 Starting test databases...")
-           (p/shell "docker-compose up -d postgres mysql redis minio")
+           (p/shell (str docker-compose-cmd " up -d postgres mysql redis minio"))
            (println "\n⏳ Waiting for databases to be healthy...")
            (Thread/sleep 5000)
            (println "\n✅ Databases started!")
@@ -22,7 +28,7 @@
   {:doc "Stop test database environment"
    :task (do
            (println "Stopping test databases...")
-           (p/shell "docker-compose down")
+           (p/shell (str docker-compose-cmd " down"))
            (println "✅ Databases stopped"))}
 
   docker:restart
@@ -42,7 +48,7 @@
              (if (= input "y")
                (do
                  (println "\n🗑️  Removing containers and volumes...")
-                 (p/shell "docker-compose down -v")
+                 (p/shell (str docker-compose-cmd " down -v"))
                  (Thread/sleep 2000)
                  (run 'docker:start))
                (println "Cancelled."))))}
@@ -51,7 +57,7 @@
   {:doc "Check status of test databases"
    :task (do
            (println "📊 Database Status\n==================\n")
-           (p/shell "docker-compose ps")
+           (p/shell (str docker-compose-cmd " ps"))
            (println "\n💡 Commands:")
            (println "  bb docker:start   - Start databases")
            (println "  bb docker:stop    - Stop databases")
@@ -61,13 +67,13 @@
 
   docker:logs
   {:doc "View database logs"
-   :task (p/shell "docker-compose logs -f")}
+   :task (p/shell (str docker-compose-cmd " logs -f"))}
 
   docker:tools
   {:doc "Start database admin tools"
    :task (do
            (println "🛠️  Starting admin tools...")
-           (p/shell "docker-compose --profile tools up -d")
+           (p/shell (str docker-compose-cmd " --profile tools up -d"))
            (println "\n🌐 Admin tools available:")
            (println "  pgAdmin:         http://localhost:8080 (admin@datacamp.local/admin)")
            (println "  phpMyAdmin:      http://localhost:8082 (root/password)")
@@ -93,7 +99,7 @@
                                      (not minio-was-running) (conj "minio"))]
              (when (seq services-to-start)
                (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
-               (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
+               (p/shell (str docker-compose-cmd " up -d " (str/join " " services-to-start)))
                (println "⏳ Waiting for databases to be healthy...")
                (Thread/sleep 8000))
             (println "🧪 Running all tests...\n")
@@ -105,7 +111,7 @@
                                       (not minio-was-running) (conj "minio"))]
                (when (seq services-to-stop)
                  (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
-                 (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
+                 (p/shell (str docker-compose-cmd " stop " (str/join " " services-to-stop))))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
@@ -121,14 +127,14 @@
            (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))]
              (when (not was-running)
                (println "🚀 Starting postgres...")
-               (p/shell "docker-compose up -d postgres")
+               (p/shell (str docker-compose-cmd " up -d postgres"))
                (println "⏳ Waiting for postgres to be healthy...")
                (Thread/sleep 5000))
              (println "🧪 Running PostgreSQL tests...\n")
              (let [result (p/shell {:continue true} "lein test datacamp.postgres-test")]
                (when (not was-running)
                  (println "\n⚙️ Stopping postgres...")
-                 (p/shell "docker-compose stop postgres"))
+                 (p/shell (str docker-compose-cmd " stop postgres")))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
@@ -140,14 +146,14 @@
            (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))]
              (when (not was-running)
                (println "🚀 Starting mysql...")
-               (p/shell "docker-compose up -d mysql")
+               (p/shell (str docker-compose-cmd " up -d mysql"))
                (println "⏳ Waiting for mysql to be healthy...")
                (Thread/sleep 8000))
              (println "🧪 Running MySQL tests...\n")
              (let [result (p/shell {:continue true} "lein test datacamp.mysql-test")]
                (when (not was-running)
                  (println "\n⚙️ Stopping mysql...")
-                 (p/shell "docker-compose stop mysql"))
+                 (p/shell (str docker-compose-cmd " stop mysql")))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
@@ -159,14 +165,14 @@
            (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))]
              (when (not was-running)
                (println "🚀 Starting redis...")
-               (p/shell "docker-compose up -d redis")
+               (p/shell (str docker-compose-cmd " up -d redis"))
                (println "⏳ Waiting for redis to be healthy...")
                (Thread/sleep 3000))
              (println "🧪 Running Redis tests...\n")
              (let [result (p/shell {:continue true} "lein test datacamp.redis-test")]
                (when (not was-running)
                  (println "\n⚙️ Stopping redis...")
-                 (p/shell "docker-compose stop redis"))
+                 (p/shell (str docker-compose-cmd " stop redis")))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
@@ -182,14 +188,14 @@
            (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))]
              (when (not was-running)
                (println "🚀 Starting postgres...")
-               (p/shell "docker-compose up -d postgres")
+               (p/shell (str docker-compose-cmd " up -d postgres"))
                (println "⏳ Waiting for postgres to be healthy...")
                (Thread/sleep 5000))
              (println "🧪 Running complex schema comparison test...\n")
              (let [result (p/shell {:continue true} "lein test datacamp.complex-test")]
                (when (not was-running)
                  (println "\n⚙️ Stopping postgres...")
-                 (p/shell "docker-compose stop postgres"))
+                 (p/shell (str docker-compose-cmd " stop postgres")))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
@@ -252,7 +258,7 @@
                                      (not minio-was-running) (conj "minio"))]
              (when (seq services-to-start)
                (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
-               (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
+               (p/shell (str docker-compose-cmd " up -d " (str/join " " services-to-start)))
                (println "⏳ Waiting for databases to be healthy...")
                (Thread/sleep 8000))
              (println "🧪 Running backend tests...\n")
@@ -264,7 +270,7 @@
                                       (not minio-was-running) (conj "minio"))]
                (when (seq services-to-stop)
                  (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
-                 (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
+                 (p/shell (str docker-compose-cmd " stop " (str/join " " services-to-stop))))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
@@ -276,7 +282,7 @@
                                                       "docker inspect -f '{{.State.Running}}' datacamp-minio")))]
              (when (not was-running)
                (println "🚀 Starting MinIO...")
-               (p/shell "docker-compose up -d minio")
+               (p/shell (str docker-compose-cmd " up -d minio"))
                (println "⏳ Waiting for MinIO to be healthy...")
                (Thread/sleep 5000))
              (println "🧪 Running S3 integration tests...\n")
@@ -284,7 +290,7 @@
                                    "lein test :only datacamp.s3-test/test-s3-backup-and-restore-roundtrip")]
                (when (not was-running)
                  (println "\n⚙️ Stopping MinIO...")
-                 (p/shell "docker-compose stop minio"))
+                 (p/shell (str docker-compose-cmd " stop minio")))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
@@ -306,7 +312,7 @@
                  extra-args (str/join " " *command-line-args*)]
              (when (seq services-to-start)
                (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
-               (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
+               (p/shell (str docker-compose-cmd " up -d " (str/join " " services-to-start)))
                (println "⏳ Waiting for databases to be healthy...")
                (Thread/sleep 8000))
              (println "📊 Running code coverage analysis...\n")
@@ -318,7 +324,7 @@
                                       (not minio-was-running) (conj "minio"))]
                (when (seq services-to-stop)
                  (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
-                 (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
+                 (p/shell (str docker-compose-cmd " stop " (str/join " " services-to-stop))))
                (when (zero? (:exit result))
                  (println "\n✅ Coverage report generated!")
                  (println "📄 View HTML report: target/coverage/index.html"))
