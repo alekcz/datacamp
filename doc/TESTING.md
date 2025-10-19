@@ -360,10 +360,11 @@ bb docker:tools
 
 Datacamp uses GitHub Actions for continuous integration and testing. The CI pipeline automatically:
 
-- Runs on every push to `main`, `master`, and `migration` branches
+- Runs on every push to any branch
 - Runs on all pull requests
-- Tests against PostgreSQL, MySQL, Redis, and MinIO services
-- Generates code coverage reports
+- Tests against Java 11, 17, and 21 for broad compatibility
+- Uses Babashka tasks for smart Docker service management
+- Generates code coverage reports (Java 17)
 - Uploads coverage to Codecov
 
 ### Build Status
@@ -376,11 +377,13 @@ Datacamp uses GitHub Actions for continuous integration and testing. The CI pipe
 The CI workflow is defined in [`.github/workflows/test.yml`](../.github/workflows/test.yml) and includes:
 
 1. **Matrix Testing**: Tests run against Java 11, 17, and 21 for broad compatibility
-2. **Service Setup**: PostgreSQL, MySQL, Redis, and MinIO containers
+2. **Smart Service Management**: Babashka tasks automatically manage Docker services
 3. **Dependency Caching**: Maven repository caching for faster builds
-4. **Test Execution**: Full test suite with all backends on each Java version
-5. **Coverage Generation**: Cloverage report (Java 17 only) with Codecov integration
-6. **Artifact Upload**: Test results for each Java version and coverage reports
+4. **Test Execution**:
+   - Java 11 & 21: `bb test:all` (smart service management + tests)
+   - Java 17: `bb coverage --codecov` (smart service management + coverage)
+5. **Coverage Generation**: Codecov report on Java 17 only
+6. **Artifact Upload**: Coverage reports available for download
 
 **Java Compatibility**: The matrix strategy ensures Datacamp works on Java 11+ (LTS versions 11, 17, and 21).
 
@@ -389,17 +392,23 @@ The CI workflow is defined in [`.github/workflows/test.yml`](../.github/workflow
 To replicate the CI environment locally:
 
 ```bash
-# Start all services (matches CI setup)
-bb docker:start
+# Run tests with smart service management (Java 11 & 21)
+bb test:all
 
-# Run tests
-lein test
+# Or run coverage with smart service management (Java 17)
+bb coverage --codecov
 
-# Generate coverage
-lein cloverage --codecov
+# Both commands automatically:
+# 1. Check which services are already running
+# 2. Start only needed services
+# 3. Run tests/coverage
+# 4. Stop only the services they started
+```
 
-# Stop services
-bb docker:stop
+**Even simpler:**
+```bash
+# Complete workflow (start → test → stop)
+bb test
 ```
 
 ## Test Coverage

@@ -1089,39 +1089,48 @@ Datacamp uses GitHub Actions for automated testing and continuous integration. E
 
 The automated CI pipeline ([`.github/workflows/test.yml`](../.github/workflows/test.yml)):
 
-1. **Triggers**: Runs on push to `main`, `master`, `migration` branches and all PRs
-2. **Services**: Spins up PostgreSQL, MySQL, Redis, and MinIO containers
-3. **Environment**: Ubuntu with Java 17 and Leiningen
+1. **Triggers**: Runs on every push to any branch and all pull requests
+2. **Matrix Testing**: Tests against Java 11, 17, and 21 for broad compatibility
+3. **Environment**: Ubuntu with Babashka, Leiningen, and Docker Compose
 4. **Caching**: Maven dependencies cached for faster builds
-5. **Testing**: Full test suite with `lein test`
-6. **Coverage**: Generates coverage with `lein cloverage --codecov`
-7. **Reporting**: Uploads coverage to Codecov and test artifacts
-8. **Duration**: ~5-8 minutes for full test suite
+5. **Testing**:
+   - Java 11 & 21: `bb test:all` (runs tests with smart service management)
+   - Java 17: `bb coverage --codecov` (runs tests with coverage reporting)
+6. **Service Management**: Babashka tasks automatically start/stop required Docker services
+7. **Reporting**: Uploads coverage to Codecov and artifacts
+8. **Duration**: ~5-8 minutes for full test suite per Java version
 
 ### Key Features
 
-- **Service Health Checks**: Waits for all services to be ready before testing
-- **Environment Variables**: Configures all backend connection strings
-- **Artifact Upload**: Test results and coverage reports available for download
+- **Smart Service Management**: `bb` tasks handle Docker service lifecycle automatically
+- **Matrix Testing**: Ensures compatibility with Java 11, 17, and 21
+- **Zero Configuration**: No manual service setup - `bb` handles everything
+- **Artifact Upload**: Coverage reports available for download
 - **Coverage Integration**: Automatic Codecov updates with coverage trends
-- **Fail Fast**: Stops on first failure for quick feedback
+- **Fail Fast**: Matrix strategy allows parallel execution across Java versions
 
 ### Replicating CI Locally
 
 To run tests exactly as CI does:
 
 ```bash
-# Start services (CI uses Docker services, we use docker-compose)
-bb docker:start
+# Run tests with smart service management (just like CI)
+bb test:all
 
-# Run tests
-lein test
+# Or run coverage with smart service management (just like CI for Java 17)
+bb coverage --codecov
 
-# Generate coverage
-lein cloverage --codecov
+# Both commands automatically:
+# 1. Check which services are already running
+# 2. Start only the services that aren't running
+# 3. Run tests/coverage
+# 4. Stop only the services they started
+```
 
-# Stop services
-bb docker:stop
+**Even simpler:**
+```bash
+# Complete workflow (start → test → stop)
+bb test
 ```
 
 ### CI Best Practices

@@ -302,14 +302,15 @@
                                      (not pg-was-running) (conj "postgres")
                                      (not mysql-was-running) (conj "mysql")
                                      (not redis-was-running) (conj "redis")
-                                     (not minio-was-running) (conj "minio"))]
+                                     (not minio-was-running) (conj "minio"))
+                 extra-args (str/join " " *command-line-args*)]
              (when (seq services-to-start)
                (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
                (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
                (println "⏳ Waiting for databases to be healthy...")
                (Thread/sleep 8000))
              (println "📊 Running code coverage analysis...\n")
-             (let [result (p/shell {:continue true} "lein cloverage")
+             (let [result (p/shell {:continue true} (str "lein cloverage " extra-args))
                    services-to-stop (cond-> []
                                       (not pg-was-running) (conj "postgres")
                                       (not mysql-was-running) (conj "mysql")
