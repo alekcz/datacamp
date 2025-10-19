@@ -606,14 +606,14 @@
 
                 ;; Install complex schema in both databases
                 (log/info "Installing complex schema...")
-                @(d/transact source-conn complex-test/complex-schema)
-                @(d/transact reference-conn complex-test/complex-schema)
+                (d/transact source-conn complex-test/complex-schema)
+                (d/transact reference-conn complex-test/complex-schema)
 
                 ;; Generate and add initial 20k complex entities
                 (log/info "Creating initial 20,000 complex entities...")
                 (let [initial-batch (generate-batch 0 20000)]
-                  @(d/transact source-conn initial-batch)
-                  @(d/transact reference-conn initial-batch))
+                  (d/transact source-conn initial-batch)
+                  (d/transact reference-conn initial-batch))
 
                 (log/info "Initial data loaded. Starting migration...")
 
@@ -646,7 +646,7 @@
 
                                   ;; Write to both source (through router) and reference
                                   (router batch)
-                                  @(d/transact reference-conn batch)
+                                  (d/transact reference-conn batch)
 
                                   (swap! batches-written conj batch-num)
                                   (Thread/sleep 1000))))
@@ -664,7 +664,7 @@
                       (log/info "Adding final verification batch...")
                       (let [final-batch (generate-batch 99 1000)]
                         (router final-batch)
-                        @(d/transact reference-conn final-batch))
+                        (d/transact reference-conn final-batch))
 
                       ;; Finalize migration
                       (log/info "Finalizing migration...")
@@ -845,10 +845,28 @@
                                                        source-conn target-config
                                                        :migration-id migration-id  ; Same ID - should continue
                                                        :database-id "error-test"
-                                                       :backup-dir test-dir)]
+                                                       :backup-dir test-dir)
+                                              ;; Generate new transactions with fresh UUIDs for retry
+                                              ;; to avoid unique constraint violations
+                                              retry-transactions (case mode
+                                                                  :fail-every-third
+                                                                  (for [i (range 15)]
+                                                                    [{:entity/id (guaranteed-unique-uuid)
+                                                                      :entity/type :event
+                                                                      :event/type :test
+                                                                      :event/at (java.util.Date.)
+                                                                      :event/data (str "Retry Event " i)}])
+                                                                  :fail-after-5
+                                                                  (for [i (range 10)]
+                                                                    [{:entity/id (guaranteed-unique-uuid)
+                                                                      :entity/type :event
+                                                                      :event/type :product-view
+                                                                      :event/at (java.util.Date.)
+                                                                      :event/data (str "Retry View " i)}])
+                                                                  [])]
 
-                                          ;; Complete remaining transactions
-                                          (doseq [tx transactions]
+                                          ;; Complete remaining transactions with fresh UUIDs
+                                          (doseq [tx retry-transactions]
                                             (router-2 tx))
 
                                           ;; Finalize
@@ -901,7 +919,7 @@
                   max-network-fails 3]
 
               ;; Setup data
-              @(d/transact source-conn [{:entity/id (guaranteed-unique-uuid)
+              (d/transact source-conn [{:entity/id (guaranteed-unique-uuid)
                                         :entity/type :test
                                         :test/name "Network Test"}])
 
@@ -914,16 +932,26 @@
 
                 ;; Simulate network failures with retries
                 (dotimes [attempt 5]
-                  (let [tx-data [{:entity/id (guaranteed-unique-uuid)
-                                 :entity/type :event
-                                 :event/type :network-test
-                                 :event/at (java.util.Date.)
-                                 :event/data (str "Attempt " attempt)}]]
+                  ;; Generate UUID outside retry loop to maintain same ID across retries
+                  (let [entity-uuid (guaranteed-unique-uuid)
+                        base-tx-data [{:entity/id entity-uuid
+                                      :entity/type :event
+                                      :event/type :network-test
+                                      :event/at (java.util.Date.)
+                                      :event/data (str "Attempt " attempt)}]]
 
                     ;; Retry logic
                     (loop [retry 0]
                       (when (< retry 3)
-                        (let [succeeded (try
+                        (let [;; Generate fresh UUID if this is a retry after failure
+                              tx-data (if (> retry 0)
+                                       [{:entity/id (guaranteed-unique-uuid) ;; New UUID for retry
+                                         :entity/type :event
+                                         :event/type :network-test
+                                         :event/at (java.util.Date.)
+                                         :event/data (str "Attempt " attempt " Retry " retry)}]
+                                       base-tx-data) ;; Use original UUID for first attempt
+                              succeeded (try
                                          ;; Simulate random network failure
                                          (when (and (< @network-fail-count max-network-fails)
                                                    (< (rand) 0.5))
