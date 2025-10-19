@@ -30,5 +30,12 @@
                                   ;; SLF4J to Timbre adapter for Datahike logging
                                   [com.fzakaria/slf4j-timbre "0.4.0"]]
                    :plugins [[lein-cloverage "1.2.4"]]}}
+
+  ;; Cloverage configuration
+  ;; Exclude migration tests from coverage runs to prevent race conditions
+  ;; in concurrent writer threads during complex migration scenarios.
+  ;; These tests are still run by bb test:all and in Java 11/21 CI jobs.
+  :cloverage {:test-ns-regex [#"^datacamp\.(?!migration-test).*-test$"]}
+
   :test-paths ["test"]
   :repl-options {:init-ns datacamp.core})

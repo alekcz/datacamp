@@ -52,7 +52,7 @@ jobs:
 
       - name: Run tests with bb
         if: matrix.java != '17'
-        run: bb test
+        run: bb test:all
 
       - name: Run coverage with bb
         if: matrix.java == '17'
