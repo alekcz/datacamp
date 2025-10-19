@@ -5,9 +5,13 @@
             [datacamp.core :as backup]
             [datacamp.directory :as dir]
             [clojure.java.io :as io]
-            [zufall.core :refer [rand-german-mammal]])
+            [zufall.core :refer [rand-german-mammal]]
+            [taoensso.timbre :as timbre])
   (:import [java.io File]
            [java.util UUID]))
+
+;; Set default log level to :warn for tests to reduce noise
+(timbre/set-level! :warn)
 
 ;; =============================================================================
 ;; Test Data Generators
@@ -80,6 +84,16 @@
   (let [conn (d/connect config)]
     (d/transact conn test-schema)
     conn))
+
+(defn create-empty-db
+  "Create an empty database without any user schema.
+  Used for restore operations where schema comes from the backup."
+  [config]
+  (try
+    (d/delete-database config)
+    (catch Exception _))
+  (d/create-database config)
+  (d/connect config))
 
 (defn populate-test-db
   "Populate a test database with sample data"

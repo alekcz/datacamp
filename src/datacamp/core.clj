@@ -603,83 +603,65 @@
             (progress-fn {:stage :transacting
                          :total-datoms (count all-datom-data)}))
 
-          ;; Group datoms by entity to reconstruct complete entities
-          (let [datoms-by-entity (group-by :e all-datom-data)
+          ;; Convert datom data maps to vectors for load-entities
+          ;; Format: [e a v tx op] where op is true for add, false for retract
+          ;; Filter out Datahike's built-in schema (tx0 = 536870912)
+          ;; Sort by transaction ID first, then by :db/txInstant attribute
+          ;; (txInstant datoms must come first within each transaction)
+          (let [tx0 536870912  ; Datahike's initial transaction with built-in schema
+                datom-vectors (->> all-datom-data
+                                  ;; Remove datoms from tx0 (built-in schema)
+                                  (remove (fn [{:keys [tx]}] (= tx tx0)))
+                                  (map (fn [{:keys [e a v tx added]}]
+                                        [e a v tx added]))
+                                  (sort-by (fn [[e a v tx op]]
+                                            [tx
+                                             ;; txInstant datoms must come first
+                                             (if (= a :db/txInstant) 0 1)
+                                             ;; Then sort by entity and attribute for consistency
+                                             e a]))
+                                  (into []))]
 
-                ;; Convert grouped datoms to entity maps
-                ;; Handle cardinality-many by collecting values
-                entities (map (fn [[eid datoms]]
-                               (let [entity-map (reduce (fn [acc {:keys [a v added]}]
-                                                         (if added
-                                                           (let [existing (get acc a)]
-                                                             (cond
-                                                               (nil? existing) (assoc acc a v)
-                                                               (vector? existing) (assoc acc a (conj existing v))
-                                                               :else (assoc acc a [existing v])))
-                                                           acc))
-                                                       {:db/id eid}
-                                                       datoms)]
-                                 entity-map))
-                             datoms-by-entity)
+            (log/info "Prepared" (count datom-vectors) "datoms for restore using load-entities")
 
-                ;; Separate schema entities from data entities
-                ;; Schema entities have :db/valueType or :db/cardinality (schema attributes)
-                schema-entities (filter #(or (:db/valueType %)
-                                            (:db/cardinality %)
-                                            (:db/ident %))
-                                       entities)
-                data-entities (remove #(or (:db/valueType %)
-                                          (:db/cardinality %)
-                                          (:db/ident %))
-                                     entities)]
+            ;; Update max-eid and max-tx to preserve entity and transaction IDs
+            ;; This ensures load-entities uses the original IDs instead of allocating new ones
+            (let [max-eid-in-backup (reduce (fn [acc [e _ _ _ _]] (max acc e)) 0 datom-vectors)
+                  max-tx-in-backup (reduce (fn [acc [_ _ _ tx _]] (max acc tx)) 0 datom-vectors)]
+              (log/info "Updating database max-eid to" max-eid-in-backup "and max-tx to" max-tx-in-backup)
+              (swap! conn (fn [db]
+                           (-> db
+                               (assoc :max-eid max-eid-in-backup)
+                               (assoc :max-tx max-tx-in-backup)))))
 
-            (log/info "Reconstructed entities: Schema:" (count schema-entities) "Data:" (count data-entities))
+            ;; Use load-entities to preserve transaction structure and txInstant
+            (when progress-fn
+              (progress-fn {:stage :loading-entities
+                           :total-datoms (count datom-vectors)}))
 
-            ;; Transact schema first
-            (when (seq schema-entities)
-              (log/info "Transacting schema entities")
+            (log/info "Loading entities directly into database")
+            @(d/load-entities conn datom-vectors)
+
+            (let [completed-at (utils/current-timestamp)
+                  duration-ms (- (.getTime completed-at) (.getTime started-at))]
+
+              (log/info "Restore completed successfully"
+                       "- Backup ID:" backup-id
+                       "- Datoms restored:" (count all-datom-data)
+                       "- Duration:" (format "%.2f seconds" (/ duration-ms 1000.0)))
+
               (when progress-fn
-                (progress-fn {:stage :transacting-schema
-                             :count (count schema-entities)}))
-              (d/transact conn {:tx-data schema-entities}))
+                (progress-fn {:stage :completed
+                             :backup-id backup-id
+                             :datoms-restored (count all-datom-data)
+                             :duration-ms duration-ms}))
 
-            ;; Transact data in batches
-            (let [batch-size 1000
-                  batches (partition-all batch-size data-entities)
-                  batch-count (count batches)]
-
-              (log/info "Transacting" (count data-entities) "data entities in" batch-count "batches")
-
-              (doseq [[idx batch] (map-indexed vector batches)]
-                (log/info "Transacting batch" (inc idx) "of" batch-count)
-
-                (when progress-fn
-                  (progress-fn {:stage :transacting-batch
-                               :batch-number (inc idx)
-                               :batch-count batch-count}))
-
-                (d/transact conn {:tx-data batch})))
-
-              (let [completed-at (utils/current-timestamp)
-                    duration-ms (- (.getTime completed-at) (.getTime started-at))]
-
-                (log/info "Restore completed successfully"
-                         "- Backup ID:" backup-id
-                         "- Datoms restored:" (count all-datom-data)
-                         "- Duration:" (format "%.2f seconds" (/ duration-ms 1000.0)))
-
-                (when progress-fn
-                  (progress-fn {:stage :completed
-                               :backup-id backup-id
-                               :datoms-restored (count all-datom-data)
-                               :duration-ms duration-ms}))
-
-                {:success true
-                 :backup-id backup-id
-                 :database-id database-id
-                 :datoms-restored (count all-datom-data)
-                 :chunks-processed chunk-count
-                 :duration-ms duration-ms}))))
+              {:success true
+               :backup-id backup-id
+               :database-id database-id
+               :datoms-restored (count all-datom-data)
+               :chunks-processed chunk-count
+               :duration-ms duration-ms}))))
 
       (catch Exception e
         (log/error e "Restore failed for backup" backup-id)
@@ -784,83 +766,65 @@
             (progress-fn {:stage :transacting
                          :total-datoms (count all-datom-data)}))
 
-          ;; Group datoms by entity to reconstruct complete entities
-          (let [datoms-by-entity (group-by :e all-datom-data)
+          ;; Convert datom data maps to vectors for load-entities
+          ;; Format: [e a v tx op] where op is true for add, false for retract
+          ;; Filter out Datahike's built-in schema (tx0 = 536870912)
+          ;; Sort by transaction ID first, then by :db/txInstant attribute
+          ;; (txInstant datoms must come first within each transaction)
+          (let [tx0 536870912  ; Datahike's initial transaction with built-in schema
+                datom-vectors (->> all-datom-data
+                                  ;; Remove datoms from tx0 (built-in schema)
+                                  (remove (fn [{:keys [tx]}] (= tx tx0)))
+                                  (map (fn [{:keys [e a v tx added]}]
+                                        [e a v tx added]))
+                                  (sort-by (fn [[e a v tx op]]
+                                            [tx
+                                             ;; txInstant datoms must come first
+                                             (if (= a :db/txInstant) 0 1)
+                                             ;; Then sort by entity and attribute for consistency
+                                             e a]))
+                                  (into []))]
 
-                ;; Convert grouped datoms to entity maps
-                ;; Handle cardinality-many by collecting values
-                entities (map (fn [[eid datoms]]
-                               (let [entity-map (reduce (fn [acc {:keys [a v added]}]
-                                                         (if added
-                                                           (let [existing (get acc a)]
-                                                             (cond
-                                                               (nil? existing) (assoc acc a v)
-                                                               (vector? existing) (assoc acc a (conj existing v))
-                                                               :else (assoc acc a [existing v])))
-                                                           acc))
-                                                       {:db/id eid}
-                                                       datoms)]
-                                 entity-map))
-                             datoms-by-entity)
+            (log/info "Prepared" (count datom-vectors) "datoms for restore using load-entities")
 
-                ;; Separate schema entities from data entities
-                ;; Schema entities have :db/valueType or :db/cardinality (schema attributes)
-                schema-entities (filter #(or (:db/valueType %)
-                                            (:db/cardinality %)
-                                            (:db/ident %))
-                                       entities)
-                data-entities (remove #(or (:db/valueType %)
-                                          (:db/cardinality %)
-                                          (:db/ident %))
-                                     entities)]
+            ;; Update max-eid and max-tx to preserve entity and transaction IDs
+            ;; This ensures load-entities uses the original IDs instead of allocating new ones
+            (let [max-eid-in-backup (reduce (fn [acc [e _ _ _ _]] (max acc e)) 0 datom-vectors)
+                  max-tx-in-backup (reduce (fn [acc [_ _ _ tx _]] (max acc tx)) 0 datom-vectors)]
+              (log/info "Updating database max-eid to" max-eid-in-backup "and max-tx to" max-tx-in-backup)
+              (swap! conn (fn [db]
+                           (-> db
+                               (assoc :max-eid max-eid-in-backup)
+                               (assoc :max-tx max-tx-in-backup)))))
 
-            (log/info "Reconstructed entities: Schema:" (count schema-entities) "Data:" (count data-entities))
+            ;; Use load-entities to preserve transaction structure and txInstant
+            (when progress-fn
+              (progress-fn {:stage :loading-entities
+                           :total-datoms (count datom-vectors)}))
 
-            ;; Transact schema first
-            (when (seq schema-entities)
-              (log/info "Transacting schema entities")
+            (log/info "Loading entities directly into database")
+            @(d/load-entities conn datom-vectors)
+
+            (let [completed-at (utils/current-timestamp)
+                  duration-ms (- (.getTime completed-at) (.getTime started-at))]
+
+              (log/info "Restore completed successfully"
+                       "- Backup ID:" backup-id
+                       "- Datoms restored:" (count all-datom-data)
+                       "- Duration:" (format "%.2f seconds" (/ duration-ms 1000.0)))
+
               (when progress-fn
-                (progress-fn {:stage :transacting-schema
-                             :count (count schema-entities)}))
-              (d/transact conn {:tx-data schema-entities}))
+                (progress-fn {:stage :completed
+                             :backup-id backup-id
+                             :datoms-restored (count all-datom-data)
+                             :duration-ms duration-ms}))
 
-            ;; Transact data in batches
-            (let [batch-size 1000
-                  batches (partition-all batch-size data-entities)
-                  batch-count (count batches)]
-
-              (log/info "Transacting" (count data-entities) "data entities in" batch-count "batches")
-
-              (doseq [[idx batch] (map-indexed vector batches)]
-                (log/info "Transacting batch" (inc idx) "of" batch-count)
-
-                (when progress-fn
-                  (progress-fn {:stage :transacting-batch
-                               :batch-number (inc idx)
-                               :batch-count batch-count}))
-
-                (d/transact conn {:tx-data batch})))
-
-              (let [completed-at (utils/current-timestamp)
-                    duration-ms (- (.getTime completed-at) (.getTime started-at))]
-
-                (log/info "Restore completed successfully"
-                         "- Backup ID:" backup-id
-                         "- Datoms restored:" (count all-datom-data)
-                         "- Duration:" (format "%.2f seconds" (/ duration-ms 1000.0)))
-
-                (when progress-fn
-                  (progress-fn {:stage :completed
-                               :backup-id backup-id
-                               :datoms-restored (count all-datom-data)
-                               :duration-ms duration-ms}))
-
-                {:success true
-                 :backup-id backup-id
-                 :database-id database-id
-                 :datoms-restored (count all-datom-data)
-                 :chunks-processed chunk-count
-                 :duration-ms duration-ms}))))
+              {:success true
+               :backup-id backup-id
+               :database-id database-id
+               :datoms-restored (count all-datom-data)
+               :chunks-processed chunk-count
+               :duration-ms duration-ms}))))
 
       (catch Exception e
         (log/error e "Restore failed for backup" backup-id)

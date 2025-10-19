@@ -279,60 +279,62 @@
               (is (= original-datom-count (:datom-count backup-result))
                   "Backup should contain all datoms")
 
-              ;; Step 3: Create new empty database for restoration
-              (with-test-db restore-config {:store {:backend :mem :id "restored-db"}}
-                (let [restore-conn (d/connect restore-config)
-                      initial-datom-count (count (d/datoms @restore-conn :eavt))]
-
-                  ;; Note: Datahike starts with schema datoms, so we check it's minimal
-                  (is (< initial-datom-count 100)
-                      "Restore database should start with minimal schema datoms")
-
-                  ;; Step 4: Restore from backup
-                  (let [progress-calls (atom [])
-                        restore-result (backup/restore-from-directory
-                                       restore-conn
-                                       {:path test-dir}
-                                       (:backup-id backup-result)
-                                       :database-id "original-db"
-                                       :verify-checksums true
-                                       :progress-fn (fn [progress]
-                                                     (swap! progress-calls conj progress)))]
-
-                    ;; Verify restore succeeded
-                    (is (:success restore-result) "Restore should succeed")
-                    (is (> (count @progress-calls) 0) "Progress function should be called")
-
-                    ;; Verify progress stages
-                    (let [stages (set (map :stage @progress-calls))]
-                      (is (contains? stages :started) "Should have started stage")
-                      (is (contains? stages :completed) "Should have completed stage"))
-
-                    ;; Step 5: Verify restored data matches original
-                    (let [restored-datom-count (count (d/datoms @restore-conn :eavt))
-                          restored-users (d/q '[:find ?e ?name
-                                               :where [?e :user/name ?name]]
-                                             @restore-conn)
-                          restored-posts (d/q '[:find ?e ?title
-                                               :where [?e :post/title ?title]]
-                                             @restore-conn)]
-
-                      ;; The restored database will have more datoms than original due to
-                      ;; the initial schema datoms + restored data
-                      (is (>= restored-datom-count original-datom-count)
-                          "Restored database should have at least the original datom count")
-                      (is (= (count original-users) (count restored-users))
-                          "Restored database should have same user count")
-                      (is (= (count original-posts) (count restored-posts))
-                          "Restored database should have same post count")
-
-                      ;; Verify specific data
-                      (is (= (set (map second original-users))
-                             (set (map second restored-users)))
-                          "User names should match")
-                      (is (= (set (map second original-posts))
-                             (set (map second restored-posts)))
-                          "Post titles should match"))))))))))))
+              ;; Step 3: Create new empty database for restoration (without schema)
+              (let [restore-config {:store {:backend :mem :id "restored-db"} :keep-history? true}
+                    restore-conn (create-empty-db restore-config)]
+                (try
+                  (let [initial-datom-count (count (d/datoms @restore-conn :eavt))]
+                    ;; Note: Datahike starts with schema datoms, so we check it's minimal
+                    (is (< initial-datom-count 100)
+                        "Restore database should start with minimal schema datoms")
+              
+                    ;; Step 4: Restore from backup
+                    (let [progress-calls (atom [])
+                          restore-result (backup/restore-from-directory
+                                         restore-conn
+                                         {:path test-dir}
+                                         (:backup-id backup-result)
+                                         :database-id "original-db"
+                                         :verify-checksums true
+                                         :progress-fn (fn [progress]
+                                                       (swap! progress-calls conj progress)))]
+              
+                      ;; Verify restore succeeded
+                      (is (:success restore-result) "Restore should succeed")
+                      (is (> (count @progress-calls) 0) "Progress function should be called")
+              
+                      ;; Verify progress stages
+                      (let [stages (set (map :stage @progress-calls))]
+                        (is (contains? stages :started) "Should have started stage")
+                        (is (contains? stages :completed) "Should have completed stage"))
+              
+                      ;; Step 5: Verify restored data matches original
+                      (let [restored-datom-count (count (d/datoms @restore-conn :eavt))
+                            restored-users (d/q '[:find ?e ?name
+                                                 :where [?e :user/name ?name]]
+                                               @restore-conn)
+                            restored-posts (d/q '[:find ?e ?title
+                                                 :where [?e :post/title ?title]]
+                                               @restore-conn)]
+              
+                        ;; The restored database will have more datoms than original due to
+                        ;; the initial schema datoms + restored data
+                        (is (>= restored-datom-count original-datom-count)
+                            "Restored database should have at least the original datom count")
+                        (is (= (count original-users) (count restored-users))
+                            "Restored database should have same user count")
+                        (is (= (count original-posts) (count restored-posts))
+                            "Restored database should have same post count")
+              
+                        ;; Verify specific data
+                        (is (= (set (map second original-users))
+                               (set (map second restored-users)))
+                            "User names should match")
+                        (is (= (set (map second original-posts))
+                               (set (map second restored-posts)))
+                            "Post titles should match"))))
+                  (finally
+                    (cleanup-test-db restore-config)))))))))))
 
 (deftest test-restore-with-checksum-verification
   (testing "Restore with checksum verification"
@@ -345,26 +347,30 @@
                               original-conn {:path test-dir}
                               :database-id "checksum-test")]
 
-            ;; Restore with checksum verification enabled
-            (with-test-db restore-config {:store {:backend :mem :id "restore-verify"}}
-              (let [restore-conn (d/connect restore-config)
-                    restore-result (backup/restore-from-directory
-                                   restore-conn
-                                   {:path test-dir}
-                                   (:backup-id backup-result)
-                                   :database-id "checksum-test"
-                                   :verify-checksums true)]
+            ;; Restore with checksum verification enabled (empty database)
+            (let [restore-config {:store {:backend :mem :id "restore-verify"} :keep-history? true}
+                  restore-conn (create-empty-db restore-config)]
+              (try
+                (let [restore-result (backup/restore-from-directory
+                                     restore-conn
+                                     {:path test-dir}
+                                     (:backup-id backup-result)
+                                     :database-id "checksum-test"
+                                     :verify-checksums true)]
 
-                (is (:success restore-result) "Restore with checksums should succeed")
-                (is (> (:datoms-restored restore-result) 0)
-                    "Should restore datoms")))))))))
+                  (is (:success restore-result) "Restore with checksums should succeed")
+                  (is (> (:datoms-restored restore-result) 0)
+                      "Should restore datoms"))
+                (finally
+                  (cleanup-test-db restore-config))))))))))
 
 (deftest test-restore-handles-errors
   (testing "Restore error handling"
     (with-test-dir test-dir
-      (with-test-db restore-config {:store {:backend :mem :id "error-restore"}}
-        (let [restore-conn (d/connect restore-config)]
-
+      ;; Create empty database for restore error test
+      (let [restore-config {:store {:backend :mem :id "error-restore"} :keep-history? true}
+            restore-conn (create-empty-db restore-config)]
+        (try
           ;; Try to restore from non-existent backup
           (let [restore-result (backup/restore-from-directory
                                restore-conn
@@ -375,7 +381,9 @@
             (is (not (:success restore-result))
                 "Restore of non-existent backup should fail")
             (is (some? (:error restore-result))
-                "Should provide error message")))))))
+                "Should provide error message"))
+          (finally
+            (cleanup-test-db restore-config)))))))
 
 ;; Run tests
 (comment

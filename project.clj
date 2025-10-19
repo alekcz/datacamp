@@ -19,6 +19,8 @@
                                   [io.replikativ/datahike-redis "0.1.7"]
                                   ;; Database drivers for JDBC backends
                                   [org.postgresql/postgresql "42.7.1"]
-                                  [com.mysql/mysql-connector-j "8.2.0"]]}}
+                                  [com.mysql/mysql-connector-j "8.2.0"]
+                                  ;; SLF4J to Timbre adapter for Datahike logging
+                                  [com.fzakaria/slf4j-timbre "0.4.0"]]}}
   :test-paths ["test"]
   :repl-options {:init-ns datacamp.core})
