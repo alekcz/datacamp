@@ -225,6 +225,17 @@
            (println "  • Concurrent migration blocking\n")
            (p/shell "lein test :only datacamp.migration-test/test-migration-error-handling"))}
 
+  test:schema
+  {:doc "Run schema evolution tests (no external dependencies)"
+   :task (do
+           (println "🧪 Running schema evolution tests...")
+           (println "This test validates:")
+           (println "  • Schema migration compatibility")
+           (println "  • Cardinality changes (one to many)")
+           (println "  • Unique constraint preservation")
+           (println "  • Unique constraint removal")
+           (println "  • Backup/restore with evolved schemas\n")
+           (p/shell "lein test datacamp.schema-evolution-test"))}
 
   test:backend
   {:doc "Run all backend tests (starts/stops databases as needed)"
@@ -343,6 +354,7 @@
            (println "  bb test:migration  - Migration tests (all scenarios)")
            (println "  bb test:migration:complex - Complex migration (120k entities)")
            (println "  bb test:migration:errors  - Error handling tests")
+           (println "  bb test:schema     - Schema evolution tests")
            (println "\nDevelopment:")
            (println "  bb repl            - Start REPL")
            (println "  bb clean           - Clean build artifacts")

@@ -48,62 +48,90 @@
     (try
       ;; Get database snapshot
       (let [db @conn
-            datoms (d/datoms db :eavt)
-            datom-vec (vec datoms)
-            datom-count (count datom-vec)
-            chunks (partition-all (quot chunk-size 100) datom-vec) ; Rough chunking
-            chunk-count (count chunks)]
+            datoms (d/datoms db :eavt) ; Lazy sequence - do NOT realize into memory
 
-        (log/info "Backing up" datom-count "datoms in" chunk-count "chunks")
+            ;; Calculate approximate chunk size (datoms per chunk)
+            ;; Original chunk-size is in bytes; estimate ~100 bytes per datom
+            datoms-per-chunk (max 1 (quot chunk-size 100))
 
-        ;; Create checkpoint
+            ;; Collect stats as we stream through chunks
+            stats (atom {:datom-count 0
+                        :chunk-count 0
+                        :max-eid 0
+                        :max-tx 0})]
+
+        (log/info "Starting streaming backup with chunk size" datoms-per-chunk "datoms")
+
+        ;; Create initial checkpoint (we don't know total chunks yet)
         (let [checkpoint (meta/create-checkpoint
                           {:operation :backup
                            :backup-id backup-id
-                           :total-chunks chunk-count})]
+                           :total-chunks :unknown})]
           (meta/update-checkpoint s3-client bucket
                                  (str backup-path "checkpoint.edn")
                                  checkpoint))
 
-        ;; Upload chunks
+        ;; Stream through datoms and upload chunks one at a time
         (let [chunk-metadata
-              (doall
-               (map-indexed
+              (vec
+               (keep-indexed
                 (fn [idx chunk]
-                  (log/info "Uploading chunk" idx "of" chunk-count)
-                  (let [chunk-data (ser/serialize-datom-chunk idx chunk)
-                        compressed (comp/compress-chunk chunk-data :algorithm compression)
-                        checksum (utils/sha256 compressed)
-                        chunk-key (str backup-path "chunks/datoms-" idx ".fressian.gz")
-                        response (s3/put-object s3-client bucket chunk-key compressed
-                                               :content-type "application/octet-stream")]
+                  (when (seq chunk) ; Skip empty chunks
+                    (let [chunk-vec (vec chunk) ; Realize only THIS chunk
+                          chunk-size (count chunk-vec)
 
-                    ;; Update checkpoint
-                    (meta/update-checkpoint s3-client bucket
-                                           (str backup-path "checkpoint.edn")
-                                           {:progress/completed (inc idx)
-                                            :state/completed-chunks (set (range (inc idx)))})
+                          ;; Extract metadata from chunk
+                          min-tx (reduce min Long/MAX_VALUE (map :tx chunk-vec))
+                          max-tx (reduce max 0 (map :tx chunk-vec))
+                          max-eid (reduce max 0 (map :e chunk-vec))]
 
-                    (meta/create-chunk-metadata
-                     {:chunk-id idx
-                      :tx-range [nil nil] ; TODO: Extract from datoms
-                      :datom-count (count chunk)
-                      :size-bytes (alength compressed)
-                      :checksum checksum
-                      :s3-key chunk-key
-                      :s3-etag (:ETag response)})))
-                chunks))]
+                      (log/info "Uploading chunk" idx "with" chunk-size "datoms")
 
-          ;; Create and upload manifest
+                      (let [chunk-data (ser/serialize-datom-chunk idx chunk-vec)
+                            compressed (comp/compress-chunk chunk-data :algorithm compression)
+                            checksum (utils/sha256 compressed)
+                            chunk-key (str backup-path "chunks/datoms-" idx ".fressian.gz")
+                            response (s3/put-object s3-client bucket chunk-key compressed
+                                                   :content-type "application/octet-stream")]
+
+                        ;; Update stats
+                        (swap! stats (fn [s]
+                                      (-> s
+                                          (update :datom-count + chunk-size)
+                                          (update :chunk-count inc)
+                                          (update :max-eid max max-eid)
+                                          (update :max-tx max max-tx))))
+
+                        ;; Update checkpoint
+                        (meta/update-checkpoint s3-client bucket
+                                               (str backup-path "checkpoint.edn")
+                                               {:progress/completed (inc idx)
+                                                :state/completed-chunks (set (range (inc idx)))})
+
+                        (meta/create-chunk-metadata
+                         {:chunk-id idx
+                          :tx-range [min-tx max-tx]
+                          :max-eid max-eid
+                          :datom-count chunk-size
+                          :size-bytes (alength compressed)
+                          :checksum checksum
+                          :s3-key chunk-key
+                          :s3-etag (:ETag response)})))))
+                (partition-all datoms-per-chunk datoms)))]
+
+          ;; Create and upload manifest using collected stats
           (let [completed-at (utils/current-timestamp)
                 total-size (reduce + (map :chunk/size-bytes chunk-metadata))
+                final-stats @stats
                 manifest (meta/create-manifest
                           {:backup-id backup-id
                            :backup-type :full
                            :database-id database-id
                            :datahike-version "0.6.1"
-                           :datom-count datom-count
-                           :chunk-count chunk-count
+                           :datom-count (:datom-count final-stats)
+                           :chunk-count (:chunk-count final-stats)
+                           :max-eid (:max-eid final-stats)
+                           :max-tx (:max-tx final-stats)
                            :total-size total-size
                            :tx-range [nil nil]
                            :chunks chunk-metadata
@@ -121,7 +149,8 @@
 
             (log/info "Backup completed successfully"
                      "- Backup ID:" backup-id
-                     "- Datoms:" datom-count
+                     "- Datoms:" (:datom-count final-stats)
+                     "- Chunks:" (:chunk-count final-stats)
                      "- Size:" (utils/format-bytes total-size)
                      "- Duration:" (format "%.2f seconds"
                                           (/ (- (.getTime completed-at)
@@ -131,8 +160,10 @@
             {:success true
              :backup-id backup-id
              :database-id database-id
-             :datom-count datom-count
-             :chunk-count chunk-count
+             :datom-count (:datom-count final-stats)
+             :chunk-count (:chunk-count final-stats)
+             :max-eid (:max-eid final-stats)
+             :max-tx (:max-tx final-stats)
              :total-size-bytes total-size
              :duration-ms (- (.getTime completed-at) (.getTime started-at))
              :s3-path (str "s3://" bucket "/" backup-path)})))
@@ -279,65 +310,93 @@
 
       ;; Get database snapshot
       (let [db @conn
-            datoms (d/datoms db :eavt)
-            datom-vec (vec datoms)
-            datom-count (count datom-vec)
-            chunks (partition-all (quot chunk-size 100) datom-vec) ; Rough chunking
-            chunk-count (count chunks)
+            datoms (d/datoms db :eavt) ; Lazy sequence - do NOT realize into memory
+
+            ;; Calculate approximate chunk size (datoms per chunk)
+            datoms-per-chunk (max 1 (quot chunk-size 100))
+
+            ;; Collect stats as we stream through chunks
+            stats (atom {:datom-count 0
+                        :chunk-count 0
+                        :max-eid 0
+                        :max-tx 0})
+
             chunks-dir (str backup-path "/chunks")]
 
-        (log/info "Backing up" datom-count "datoms in" chunk-count "chunks")
+        (log/info "Starting streaming backup with chunk size" datoms-per-chunk "datoms")
 
         ;; Create chunks directory
         (dir/ensure-directory chunks-dir)
 
-        ;; Create checkpoint
+        ;; Create initial checkpoint (we don't know total chunks yet)
         (let [checkpoint (meta/create-checkpoint
                           {:operation :backup
                            :backup-id backup-id
-                           :total-chunks chunk-count})]
+                           :total-chunks :unknown})]
           (meta/update-checkpoint-file
            (str backup-path "/checkpoint.edn")
            checkpoint))
 
-        ;; Write chunks
+        ;; Stream through datoms and write chunks one at a time
         (let [chunk-metadata
-              (doall
-               (map-indexed
+              (vec
+               (keep-indexed
                 (fn [idx chunk]
-                  (log/info "Writing chunk" idx "of" chunk-count)
-                  (let [chunk-data (ser/serialize-datom-chunk idx chunk)
-                        compressed (comp/compress-chunk chunk-data :algorithm compression)
-                        checksum (utils/sha256 compressed)
-                        chunk-path (str chunks-dir "/datoms-" idx ".fressian.gz")
-                        {:keys [size]} (dir/write-file chunk-path compressed)]
+                  (when (seq chunk) ; Skip empty chunks
+                    (let [chunk-vec (vec chunk) ; Realize only THIS chunk
+                          chunk-size (count chunk-vec)
 
-                    ;; Update checkpoint
-                    (meta/update-checkpoint-file
-                     (str backup-path "/checkpoint.edn")
-                     {:progress/completed (inc idx)
-                      :state/completed-chunks (set (range (inc idx)))})
+                          ;; Extract metadata from chunk
+                          min-tx (reduce min Long/MAX_VALUE (map :tx chunk-vec))
+                          max-tx (reduce max 0 (map :tx chunk-vec))
+                          max-eid (reduce max 0 (map :e chunk-vec))]
 
-                    (meta/create-chunk-metadata
-                     {:chunk-id idx
-                      :tx-range [nil nil]
-                      :datom-count (count chunk)
-                      :size-bytes size
-                      :checksum checksum
-                      :s3-key (str "chunks/datoms-" idx ".fressian.gz")  ; Keep for compatibility
-                      :s3-etag nil})))
-                chunks))]
+                      (log/info "Writing chunk" idx "with" chunk-size "datoms")
 
-          ;; Create and write manifest
+                      (let [chunk-data (ser/serialize-datom-chunk idx chunk-vec)
+                            compressed (comp/compress-chunk chunk-data :algorithm compression)
+                            checksum (utils/sha256 compressed)
+                            chunk-path (str chunks-dir "/datoms-" idx ".fressian.gz")
+                            {:keys [size]} (dir/write-file chunk-path compressed)]
+
+                        ;; Update stats
+                        (swap! stats (fn [s]
+                                      (-> s
+                                          (update :datom-count + chunk-size)
+                                          (update :chunk-count inc)
+                                          (update :max-eid max max-eid)
+                                          (update :max-tx max max-tx))))
+
+                        ;; Update checkpoint
+                        (meta/update-checkpoint-file
+                         (str backup-path "/checkpoint.edn")
+                         {:progress/completed (inc idx)
+                          :state/completed-chunks (set (range (inc idx)))})
+
+                        (meta/create-chunk-metadata
+                         {:chunk-id idx
+                          :tx-range [min-tx max-tx]
+                          :max-eid max-eid
+                          :datom-count chunk-size
+                          :size-bytes size
+                          :checksum checksum
+                          :s3-key (str "chunks/datoms-" idx ".fressian.gz")  ; Keep for compatibility
+                          :s3-etag nil})))))
+                (partition-all datoms-per-chunk datoms)))]
+
+          ;; Create and write manifest using collected stats
           (let [completed-at (utils/current-timestamp)
                 total-size (reduce + (map :chunk/size-bytes chunk-metadata))
+                final-stats @stats
                 manifest (meta/create-manifest
                           {:backup-id backup-id
                            :backup-type :full
                            :database-id database-id
                            :datahike-version "0.6.1"
-                           :datom-count datom-count
-                           :chunk-count chunk-count
+                           :datom-count (:datom-count final-stats)
+                           :chunk-count (:chunk-count final-stats)
+                           :max-eid (:max-eid final-stats)
+                           :max-tx (:max-tx final-stats)
                            :total-size total-size
                            :tx-range [nil nil]
                            :chunks chunk-metadata
@@ -352,7 +411,8 @@
 
             (log/info "Backup completed successfully"
                      "- Backup ID:" backup-id
-                     "- Datoms:" datom-count
+                     "- Datoms:" (:datom-count final-stats)
+                     "- Chunks:" (:chunk-count final-stats)
                      "- Size:" (utils/format-bytes total-size)
                      "- Duration:" (format "%.2f seconds"
                                           (/ (- (.getTime completed-at)
@@ -363,8 +423,10 @@
             {:success true
              :backup-id backup-id
              :database-id database-id
-             :datom-count datom-count
-             :chunk-count chunk-count
+             :datom-count (:datom-count final-stats)
+             :chunk-count (:chunk-count final-stats)
+             :max-eid (:max-eid final-stats)
+             :max-tx (:max-tx final-stats)
              :total-size-bytes total-size
              :duration-ms (- (.getTime completed-at) (.getTime started-at))
              :path backup-path})))
@@ -507,6 +569,61 @@
                       :older-than-hours 24))
 
 ;; =============================================================================
+;; Restore API - Helper Functions
+;; =============================================================================
+
+(defn compare-datom-maps-by-tx
+  "Compare two datom data maps by transaction order for sorting.
+   Ensures :db/txInstant comes first within each transaction."
+  [d1 d2]
+  (let [tx-cmp (compare (:tx d1) (:tx d2))]
+    (if (zero? tx-cmp)
+      ;; Same transaction: txInstant attributes must come first
+      (let [a1 (:a d1)
+            a2 (:a d2)
+            tx-inst-1 (= a1 :db/txInstant)
+            tx-inst-2 (= a2 :db/txInstant)]
+        (cond
+          (and tx-inst-1 (not tx-inst-2)) -1
+          (and tx-inst-2 (not tx-inst-1)) 1
+          :else (let [e-cmp (compare (:e d1) (:e d2))]
+                  (if (zero? e-cmp)
+                    (compare a1 a2)
+                    e-cmp))))
+      tx-cmp)))
+
+(defn merge-sorted-chunk-streams
+  "K-way merge of sorted chunk streams using a priority queue.
+   Each chunk is a lazy sequence. Returns a lazy sequence of datom data maps
+   sorted by transaction order. Only keeps O(k) datoms in memory at once
+   where k is the number of chunks.
+
+   chunks: sequence of lazy sequences of datom data maps"
+  [chunks]
+  (let [pq (java.util.PriorityQueue.
+            (reify java.util.Comparator
+              (compare [_ entry1 entry2]
+                ;; Each entry is [datom chunk-idx remaining]
+                ;; Compare by the datom (first element)
+                (compare-datom-maps-by-tx (first entry1) (first entry2)))))]
+
+    ;; Initialize priority queue with first datom from each non-empty chunk
+    (doseq [[chunk-idx chunk-seq] (map-indexed vector chunks)]
+      (when-let [first-datom (first chunk-seq)]
+        (.offer pq [first-datom chunk-idx (rest chunk-seq)])))
+
+    ;; Lazy sequence that pulls from priority queue
+    ((fn step []
+       (lazy-seq
+        (when-not (.isEmpty pq)
+          (let [[datom chunk-idx remaining] (.poll pq)]
+            ;; If this chunk has more datoms, add next one to queue
+            (when-let [next-datom (first remaining)]
+              (.offer pq [next-datom chunk-idx (rest remaining)]))
+            ;; Return current datom and continue
+            (cons datom (step)))))))))
+
+;; =============================================================================
 ;; Restore API
 ;; =============================================================================
 
@@ -553,117 +670,121 @@
                        :total-chunks chunk-count
                        :total-datoms datom-count}))
 
-        ;; Download and process each chunk
-        (let [all-datom-data
-              (doall
-               (mapcat
-                (fn [chunk-meta]
-                  (let [chunk-id (:chunk/id chunk-meta)
-                        chunk-key (:chunk/s3-key chunk-meta)
-                        expected-checksum (:chunk/checksum chunk-meta)]
+        ;; Create lazy sequences for each chunk (don't realize yet)
+        (let [chunk-streams
+              (map (fn [chunk-meta]
+                     (lazy-seq
+                      (let [chunk-id (:chunk/id chunk-meta)
+                            chunk-key (:chunk/s3-key chunk-meta)
+                            expected-checksum (:chunk/checksum chunk-meta)]
 
-                    (log/info "Downloading chunk" chunk-id "of" chunk-count)
-
-                    (when progress-fn
-                      (progress-fn {:stage :downloading
-                                   :chunk-id chunk-id
-                                   :chunk-count chunk-count}))
-
-                    ;; Download chunk
-                    (let [response (s3/get-object s3-client bucket chunk-key)
-                          compressed-data (utils/response->bytes response)]
-
-                      ;; Verify checksum if requested
-                      (when verify-checksums
-                        (let [actual-checksum (utils/sha256 compressed-data)]
-                          (when (not= expected-checksum actual-checksum)
-                            (throw (ex-info "Checksum mismatch for chunk"
-                                          {:chunk-id chunk-id
-                                           :expected expected-checksum
-                                           :actual actual-checksum})))))
-
-                      ;; Decompress and deserialize
-                      (let [decompressed (comp/decompress-chunk compressed-data :algorithm :gzip)
-                            chunk-data (ser/deserialize-datom-chunk decompressed)
-                            datom-vecs (:datoms chunk-data)]
-
-                        (log/info "Processed chunk" chunk-id "with" (count datom-vecs) "datoms")
+                        (log/info "Downloading chunk" chunk-id "of" chunk-count)
 
                         (when progress-fn
-                          (progress-fn {:stage :processed
+                          (progress-fn {:stage :downloading
                                        :chunk-id chunk-id
-                                       :chunk-count chunk-count
-                                       :datoms-in-chunk (count datom-vecs)}))
+                                       :chunk-count chunk-count}))
 
-                        ;; Convert vectors back to datom data maps
-                        (map ser/vec->datom-data datom-vecs)))))
-                chunks))]
+                        ;; Download chunk
+                        (let [response (s3/get-object s3-client bucket chunk-key)
+                              compressed-data (utils/response->bytes response)]
 
-          (log/info "All chunks downloaded. Restoring" (count all-datom-data) "datoms to database")
+                          ;; Verify checksum if requested
+                          (when verify-checksums
+                            (let [actual-checksum (utils/sha256 compressed-data)]
+                              (when (not= expected-checksum actual-checksum)
+                                (throw (ex-info "Checksum mismatch for chunk"
+                                              {:chunk-id chunk-id
+                                               :expected expected-checksum
+                                               :actual actual-checksum})))))
 
-          (when progress-fn
-            (progress-fn {:stage :transacting
-                         :total-datoms (count all-datom-data)}))
+                          ;; Decompress and deserialize
+                          (let [decompressed (comp/decompress-chunk compressed-data :algorithm :gzip)
+                                chunk-data (ser/deserialize-datom-chunk decompressed)
+                                datom-vecs (:datoms chunk-data)]
 
-          ;; Convert datom data maps to vectors for load-entities
-          ;; Format: [e a v tx op] where op is true for add, false for retract
-          ;; Filter out Datahike's built-in schema (tx0 = 536870912)
-          ;; Sort by transaction ID first, then by :db/txInstant attribute
-          ;; (txInstant datoms must come first within each transaction)
+                            (log/info "Processed chunk" chunk-id "with" (count datom-vecs) "datoms")
+
+                            (when progress-fn
+                              (progress-fn {:stage :processed
+                                           :chunk-id chunk-id
+                                           :chunk-count chunk-count
+                                           :datoms-in-chunk (count datom-vecs)}))
+
+                            ;; Convert vectors back to datom data maps - returns lazy seq
+                            (map ser/vec->datom-data datom-vecs))))))
+                   chunks)]
+
+          (log/info "Using k-way merge to stream datoms in transaction order")
+
+          ;; Use k-way merge sort to stream datoms in transaction order
+          ;; This only keeps O(k) datoms in memory where k = number of chunks
           (let [tx0 536870912  ; Datahike's initial transaction with built-in schema
-                datom-vectors (->> all-datom-data
-                                  ;; Remove datoms from tx0 (built-in schema)
-                                  (remove (fn [{:keys [tx]}] (= tx tx0)))
-                                  (map (fn [{:keys [e a v tx added]}]
-                                        [e a v tx added]))
-                                  (sort-by (fn [[e a v tx op]]
-                                            [tx
-                                             ;; txInstant datoms must come first
-                                             (if (= a :db/txInstant) 0 1)
-                                             ;; Then sort by entity and attribute for consistency
-                                             e a]))
-                                  (into []))]
+                sorted-datom-stream (->> (merge-sorted-chunk-streams chunk-streams)
+                                        ;; Remove datoms from tx0 (built-in schema)
+                                        (remove (fn [{:keys [tx]}] (= tx tx0))))]
 
-            (log/info "Prepared" (count datom-vectors) "datoms for restore using load-entities")
+            (when progress-fn
+              (progress-fn {:stage :transacting
+                           :total-datoms datom-count}))
 
-            ;; Update max-eid and max-tx to preserve entity and transaction IDs
-            ;; This ensures load-entities uses the original IDs instead of allocating new ones
-            (let [max-eid-in-backup (reduce (fn [acc [e _ _ _ _]] (max acc e)) 0 datom-vectors)
-                  max-tx-in-backup (reduce (fn [acc [_ _ _ tx _]] (max acc tx)) 0 datom-vectors)]
+            ;; Update max-eid and max-tx from manifest (no need to scan!)
+            (let [max-eid-in-backup (or (:stats/max-eid manifest)
+                                       ;; Fallback for old backups without this field
+                                       (reduce max 0 (map :chunk/max-eid chunks)))
+                  max-tx-in-backup (or (:stats/max-tx manifest)
+                                      ;; Fallback for old backups without this field
+                                      (let [tx-ranges (keep :chunk/tx-range chunks)]
+                                        (if (seq tx-ranges)
+                                          (reduce max 0 (map second tx-ranges))
+                                          0)))]
               (log/info "Updating database max-eid to" max-eid-in-backup "and max-tx to" max-tx-in-backup)
               (swap! conn (fn [db]
                            (-> db
                                (assoc :max-eid max-eid-in-backup)
                                (assoc :max-tx max-tx-in-backup)))))
 
-            ;; Use load-entities to preserve transaction structure and txInstant
+            ;; Stream datoms to load-entities in batches to avoid holding everything in memory
+            ;; Process in batches of 10000 datoms
             (when progress-fn
               (progress-fn {:stage :loading-entities
-                           :total-datoms (count datom-vectors)}))
+                           :total-datoms datom-count}))
 
-            (log/info "Loading entities directly into database")
-            @(d/load-entities conn datom-vectors)
+            (log/info "Loading entities directly into database in streaming fashion")
 
-            (let [completed-at (utils/current-timestamp)
-                  duration-ms (- (.getTime completed-at) (.getTime started-at))]
+            ;; Stream load-entities in batches
+            (let [batch-size 10000
+                  loaded-count (atom 0)]
+              (doseq [batch (partition-all batch-size sorted-datom-stream)]
+                (let [batch-vectors (mapv (fn [{:keys [e a v tx added]}]
+                                           [e a v tx added])
+                                         batch)]
+                  (swap! loaded-count + (count batch-vectors))
+                  (log/info "Loading batch of" (count batch-vectors) "datoms, total so far:" @loaded-count)
+                  @(d/load-entities conn batch-vectors)))
 
-              (log/info "Restore completed successfully"
-                       "- Backup ID:" backup-id
-                       "- Datoms restored:" (count all-datom-data)
-                       "- Duration:" (format "%.2f seconds" (/ duration-ms 1000.0)))
+              ;; All done - report completion
+              (let [completed-at (utils/current-timestamp)
+                    duration-ms (- (.getTime completed-at) (.getTime started-at))
+                    final-datom-count @loaded-count]
 
-              (when progress-fn
-                (progress-fn {:stage :completed
-                             :backup-id backup-id
-                             :datoms-restored (count all-datom-data)
-                             :duration-ms duration-ms}))
+                (log/info "Restore completed successfully"
+                         "- Backup ID:" backup-id
+                         "- Datoms restored:" final-datom-count
+                         "- Duration:" (format "%.2f seconds" (/ duration-ms 1000.0)))
 
-              {:success true
-               :backup-id backup-id
-               :database-id database-id
-               :datoms-restored (count all-datom-data)
-               :chunks-processed chunk-count
-               :duration-ms duration-ms}))))
+                (when progress-fn
+                  (progress-fn {:stage :completed
+                               :backup-id backup-id
+                               :datoms-restored final-datom-count
+                               :duration-ms duration-ms}))
+
+                {:success true
+                 :backup-id backup-id
+                 :database-id database-id
+                 :datoms-restored final-datom-count
+                 :chunks-processed chunk-count
+                 :duration-ms duration-ms})))))
 
       (catch Exception e
         (when-not suppress-error-logging
@@ -719,117 +840,121 @@
                        :total-chunks chunk-count
                        :total-datoms datom-count}))
 
-        ;; Read and process each chunk
-        (let [all-datom-data
-              (doall
-               (mapcat
-                (fn [chunk-meta]
-                  (let [chunk-id (:chunk/id chunk-meta)
-                        chunk-key (:chunk/s3-key chunk-meta) ; Path relative to backup dir
-                        chunk-path (str backup-path "/" chunk-key)
-                        expected-checksum (:chunk/checksum chunk-meta)]
+        ;; Create lazy sequences for each chunk (don't realize yet)
+        (let [chunk-streams
+              (map (fn [chunk-meta]
+                     (lazy-seq
+                      (let [chunk-id (:chunk/id chunk-meta)
+                            chunk-key (:chunk/s3-key chunk-meta) ; Path relative to backup dir
+                            chunk-path (str backup-path "/" chunk-key)
+                            expected-checksum (:chunk/checksum chunk-meta)]
 
-                    (log/info "Reading chunk" chunk-id "of" chunk-count)
-
-                    (when progress-fn
-                      (progress-fn {:stage :reading
-                                   :chunk-id chunk-id
-                                   :chunk-count chunk-count}))
-
-                    ;; Read chunk
-                    (let [compressed-data (dir/read-file chunk-path)]
-
-                      ;; Verify checksum if requested
-                      (when verify-checksums
-                        (let [actual-checksum (utils/sha256 compressed-data)]
-                          (when (not= expected-checksum actual-checksum)
-                            (throw (ex-info "Checksum mismatch for chunk"
-                                          {:chunk-id chunk-id
-                                           :expected expected-checksum
-                                           :actual actual-checksum})))))
-
-                      ;; Decompress and deserialize
-                      (let [decompressed (comp/decompress-chunk compressed-data :algorithm :gzip)
-                            chunk-data (ser/deserialize-datom-chunk decompressed)
-                            datom-vecs (:datoms chunk-data)]
-
-                        (log/info "Processed chunk" chunk-id "with" (count datom-vecs) "datoms")
+                        (log/info "Reading chunk" chunk-id "of" chunk-count)
 
                         (when progress-fn
-                          (progress-fn {:stage :processed
+                          (progress-fn {:stage :reading
                                        :chunk-id chunk-id
-                                       :chunk-count chunk-count
-                                       :datoms-in-chunk (count datom-vecs)}))
+                                       :chunk-count chunk-count}))
 
-                        ;; Convert vectors back to datom data maps
-                        (map ser/vec->datom-data datom-vecs)))))
-                chunks))]
+                        ;; Read chunk
+                        (let [compressed-data (dir/read-file chunk-path)]
 
-          (log/info "All chunks read. Restoring" (count all-datom-data) "datoms to database")
+                          ;; Verify checksum if requested
+                          (when verify-checksums
+                            (let [actual-checksum (utils/sha256 compressed-data)]
+                              (when (not= expected-checksum actual-checksum)
+                                (throw (ex-info "Checksum mismatch for chunk"
+                                              {:chunk-id chunk-id
+                                               :expected expected-checksum
+                                               :actual actual-checksum})))))
 
-          (when progress-fn
-            (progress-fn {:stage :transacting
-                         :total-datoms (count all-datom-data)}))
+                          ;; Decompress and deserialize
+                          (let [decompressed (comp/decompress-chunk compressed-data :algorithm :gzip)
+                                chunk-data (ser/deserialize-datom-chunk decompressed)
+                                datom-vecs (:datoms chunk-data)]
 
-          ;; Convert datom data maps to vectors for load-entities
-          ;; Format: [e a v tx op] where op is true for add, false for retract
-          ;; Filter out Datahike's built-in schema (tx0 = 536870912)
-          ;; Sort by transaction ID first, then by :db/txInstant attribute
-          ;; (txInstant datoms must come first within each transaction)
+                            (log/info "Processed chunk" chunk-id "with" (count datom-vecs) "datoms")
+
+                            (when progress-fn
+                              (progress-fn {:stage :processed
+                                           :chunk-id chunk-id
+                                           :chunk-count chunk-count
+                                           :datoms-in-chunk (count datom-vecs)}))
+
+                            ;; Convert vectors back to datom data maps - returns lazy seq
+                            (map ser/vec->datom-data datom-vecs))))))
+                   chunks)]
+
+          (log/info "Using k-way merge to stream datoms in transaction order")
+
+          ;; Use k-way merge sort to stream datoms in transaction order
+          ;; This only keeps O(k) datoms in memory where k = number of chunks
           (let [tx0 536870912  ; Datahike's initial transaction with built-in schema
-                datom-vectors (->> all-datom-data
-                                  ;; Remove datoms from tx0 (built-in schema)
-                                  (remove (fn [{:keys [tx]}] (= tx tx0)))
-                                  (map (fn [{:keys [e a v tx added]}]
-                                        [e a v tx added]))
-                                  (sort-by (fn [[e a v tx op]]
-                                            [tx
-                                             ;; txInstant datoms must come first
-                                             (if (= a :db/txInstant) 0 1)
-                                             ;; Then sort by entity and attribute for consistency
-                                             e a]))
-                                  (into []))]
+                sorted-datom-stream (->> (merge-sorted-chunk-streams chunk-streams)
+                                        ;; Remove datoms from tx0 (built-in schema)
+                                        (remove (fn [{:keys [tx]}] (= tx tx0))))]
 
-            (log/info "Prepared" (count datom-vectors) "datoms for restore using load-entities")
+            (when progress-fn
+              (progress-fn {:stage :transacting
+                           :total-datoms datom-count}))
 
-            ;; Update max-eid and max-tx to preserve entity and transaction IDs
-            ;; This ensures load-entities uses the original IDs instead of allocating new ones
-            (let [max-eid-in-backup (reduce (fn [acc [e _ _ _ _]] (max acc e)) 0 datom-vectors)
-                  max-tx-in-backup (reduce (fn [acc [_ _ _ tx _]] (max acc tx)) 0 datom-vectors)]
+            ;; Update max-eid and max-tx from manifest (no need to scan!)
+            (let [max-eid-in-backup (or (:stats/max-eid manifest)
+                                       ;; Fallback for old backups without this field
+                                       (reduce max 0 (map :chunk/max-eid chunks)))
+                  max-tx-in-backup (or (:stats/max-tx manifest)
+                                      ;; Fallback for old backups without this field
+                                      (let [tx-ranges (keep :chunk/tx-range chunks)]
+                                        (if (seq tx-ranges)
+                                          (reduce max 0 (map second tx-ranges))
+                                          0)))]
               (log/info "Updating database max-eid to" max-eid-in-backup "and max-tx to" max-tx-in-backup)
               (swap! conn (fn [db]
                            (-> db
                                (assoc :max-eid max-eid-in-backup)
                                (assoc :max-tx max-tx-in-backup)))))
 
-            ;; Use load-entities to preserve transaction structure and txInstant
+            ;; Stream datoms to load-entities in batches to avoid holding everything in memory
+            ;; Process in batches of 10000 datoms
             (when progress-fn
               (progress-fn {:stage :loading-entities
-                           :total-datoms (count datom-vectors)}))
+                           :total-datoms datom-count}))
 
-            (log/info "Loading entities directly into database")
-            @(d/load-entities conn datom-vectors)
+            (log/info "Loading entities directly into database in streaming fashion")
 
-            (let [completed-at (utils/current-timestamp)
-                  duration-ms (- (.getTime completed-at) (.getTime started-at))]
+            ;; Stream load-entities in batches
+            (let [batch-size 10000
+                  loaded-count (atom 0)]
+              (doseq [batch (partition-all batch-size sorted-datom-stream)]
+                (let [batch-vectors (mapv (fn [{:keys [e a v tx added]}]
+                                           [e a v tx added])
+                                         batch)]
+                  (swap! loaded-count + (count batch-vectors))
+                  (log/info "Loading batch of" (count batch-vectors) "datoms, total so far:" @loaded-count)
+                  @(d/load-entities conn batch-vectors)))
 
-              (log/info "Restore completed successfully"
-                       "- Backup ID:" backup-id
-                       "- Datoms restored:" (count all-datom-data)
-                       "- Duration:" (format "%.2f seconds" (/ duration-ms 1000.0)))
+              ;; All done - report completion
+              (let [completed-at (utils/current-timestamp)
+                    duration-ms (- (.getTime completed-at) (.getTime started-at))
+                    final-datom-count @loaded-count]
 
-              (when progress-fn
-                (progress-fn {:stage :completed
-                             :backup-id backup-id
-                             :datoms-restored (count all-datom-data)
-                             :duration-ms duration-ms}))
+                (log/info "Restore completed successfully"
+                         "- Backup ID:" backup-id
+                         "- Datoms restored:" final-datom-count
+                         "- Duration:" (format "%.2f seconds" (/ duration-ms 1000.0)))
 
-              {:success true
-               :backup-id backup-id
-               :database-id database-id
-               :datoms-restored (count all-datom-data)
-               :chunks-processed chunk-count
-               :duration-ms duration-ms}))))
+                (when progress-fn
+                  (progress-fn {:stage :completed
+                               :backup-id backup-id
+                               :datoms-restored final-datom-count
+                               :duration-ms duration-ms}))
+
+                {:success true
+                 :backup-id backup-id
+                 :database-id database-id
+                 :datoms-restored final-datom-count
+                 :chunks-processed chunk-count
+                 :duration-ms duration-ms})))))
 
       (catch Exception e
         (when-not suppress-error-logging

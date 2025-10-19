@@ -3,7 +3,8 @@
   (:require [clojure.test :refer :all]
             [datahike.api :as d]
             [datacamp.core :as backup]
-            [datacamp.test-helpers :refer :all]))
+            [datacamp.test-helpers :refer :all]
+            [taoensso.timbre]))
 
 (deftest test-cardinality-one-to-many-evolution
   (testing "Evolve attribute from cardinality/one to cardinality/many"
@@ -186,10 +187,13 @@
                   "Should have unique/value constraint initially"))
 
             ;; Try to add duplicate category - should fail
+            ;; Temporarily suppress error logging to avoid confusing test output
             (is (thrown? Exception
-                        (d/transact source-conn {:tx-data [{:product/name "Wireless Mouse"
-                                                           :product/category "Electronics"  ; Duplicate!
-                                                           :product/price 50}]}))
+                        (with-redefs [taoensso.timbre/*config*
+                                      (assoc taoensso.timbre/*config* :min-level :fatal)]
+                          (d/transact source-conn {:tx-data [{:product/name "Wireless Mouse"
+                                                             :product/category "Electronics"  ; Duplicate!
+                                                             :product/price 50}]})))
                 "Should reject duplicate category with unique/value constraint")
 
             (is (= 2 (count (d/q '[:find ?e :where [?e :product/name]] @source-conn)))

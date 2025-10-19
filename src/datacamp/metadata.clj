@@ -31,6 +31,7 @@
   "Create a human-readable manifest file"
   [{:keys [backup-id backup-type database-id datahike-version
            datom-count chunk-count total-size tx-range chunks
+           max-eid max-tx
            started-at completed-at]}]
   {:backup/id backup-id
    :backup/type backup-type
@@ -55,6 +56,8 @@
    :stats/chunk-count chunk-count
    :stats/size-bytes total-size
    :stats/tx-range tx-range
+   :stats/max-eid max-eid
+   :stats/max-tx max-tx
 
    :chunks chunks
 
@@ -67,9 +70,10 @@
 
 (defn create-chunk-metadata
   "Create metadata for a single chunk"
-  [{:keys [chunk-id tx-range datom-count size-bytes checksum s3-key s3-etag]}]
+  [{:keys [chunk-id tx-range max-eid datom-count size-bytes checksum s3-key s3-etag]}]
   {:chunk/id chunk-id
    :chunk/tx-range tx-range
+   :chunk/max-eid max-eid
    :chunk/datom-count datom-count
    :chunk/size-bytes size-bytes
    :chunk/checksum checksum
