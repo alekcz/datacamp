@@ -289,6 +289,41 @@
                  (System/exit 1)))))}
 
 
+  ;; Coverage
+  coverage
+  {:doc "Run code coverage with cloverage (starts/stops databases as needed)"
+   :task (do
+           (println "🔍 Checking database status...")
+           (let [pg-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))
+                 mysql-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))
+                 redis-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))
+                 minio-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-minio")))
+                 services-to-start (cond-> []
+                                     (not pg-was-running) (conj "postgres")
+                                     (not mysql-was-running) (conj "mysql")
+                                     (not redis-was-running) (conj "redis")
+                                     (not minio-was-running) (conj "minio"))]
+             (when (seq services-to-start)
+               (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
+               (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
+               (println "⏳ Waiting for databases to be healthy...")
+               (Thread/sleep 8000))
+             (println "📊 Running code coverage analysis...\n")
+             (let [result (p/shell {:continue true} "lein cloverage")
+                   services-to-stop (cond-> []
+                                      (not pg-was-running) (conj "postgres")
+                                      (not mysql-was-running) (conj "mysql")
+                                      (not redis-was-running) (conj "redis")
+                                      (not minio-was-running) (conj "minio"))]
+               (when (seq services-to-stop)
+                 (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
+                 (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
+               (when (zero? (:exit result))
+                 (println "\n✅ Coverage report generated!")
+                 (println "📄 View HTML report: target/coverage/index.html"))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
   ;; Combined workflows
   test
   {:doc "Start Docker, run all tests, stop Docker (default)"
@@ -355,6 +390,8 @@
            (println "  bb test:migration:complex - Complex migration (120k entities)")
            (println "  bb test:migration:errors  - Error handling tests")
            (println "  bb test:schema     - Schema evolution tests")
+           (println "\nCode Coverage:")
+           (println "  bb coverage        - Run code coverage analysis with cloverage")
            (println "\nDevelopment:")
            (println "  bb repl            - Start REPL")
            (println "  bb clean           - Clean build artifacts")
