@@ -142,10 +142,13 @@
                          file-writer captured-count verified-count)))
 
 (defn stop-transaction-capture
-  "Stop capturing transactions"
+  "Stop capturing transactions and flush any pending writes"
   [capture]
   (when capture
     (d/unlisten (:source-conn capture) (:listener-key capture))
+    ;; Flush any remaining items in the queue before closing
+    (Thread/sleep 100) ;; Give listener a moment to finish
+    (.flush (:file-writer capture))
     (.close (:file-writer capture))
     (log/info "Stopped transaction capture. Captured" @(:captured-count capture) "transactions")))
 
@@ -288,7 +291,7 @@
                   ([] {:status :already-completed
                        :target-conn target-conn
                        :migration-id migration-id})
-                  ([tx-data] @(d/transact target-conn tx-data)))))
+                  ([tx-data] (d/transact target-conn tx-data)))))
 
             :archived
             (do
@@ -298,7 +301,7 @@
                   ([] {:status :archived
                        :target-conn target-conn
                        :migration-id migration-id})
-                  ([tx-data] @(d/transact target-conn tx-data)))))
+                  ([tx-data] (d/transact target-conn tx-data)))))
 
             :failed
             (throw (ex-info "Previous migration with this ID failed"
@@ -373,7 +376,14 @@
             (when progress-fn
               (progress-fn {:stage :restoring-to-target}))
 
-            (d/create-database target-config)
+            ;; Create database if it doesn't exist
+            (try
+              (d/create-database target-config)
+              (catch Exception e
+                (if (re-find #"already exists" (.getMessage e))
+                  (log/info "Target database already exists, will connect to it")
+                  (throw e))))
+
             (let [target-conn (d/connect target-config)
                   restore-result (restore-ns
                                  target-conn

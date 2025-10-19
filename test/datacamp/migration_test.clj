@@ -89,9 +89,9 @@
             (let [writer-thread (future
                                  (while @write-thread-active
                                    (try
-                                     @(d/transact source-conn
-                                                 [{:db/id -1
-                                                   :user/name (str "BackgroundUser" @writes-completed)}])
+                                     (d/transact source-conn
+                                                [{:db/id -1
+                                                  :user/name (str "BackgroundUser" @writes-completed)}])
                                      (swap! writes-completed inc)
                                      (Thread/sleep 50)
                                      (catch Exception e
@@ -456,9 +456,11 @@
 
                 ;; Wait for all to complete
                 (doseq [f futures] @f)
+                (log/info "Submitted" @tx-count "concurrent transactions")
 
-                ;; Give transaction capture a moment to process
-                (Thread/sleep 500)
+                ;; Give transaction capture more time to process and write to log
+                ;; The listener runs asynchronously and needs time to write to the log
+                (Thread/sleep 5000)
 
                 ;; Finalize
                 (let [result (router)
