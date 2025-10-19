@@ -5,10 +5,12 @@ This document describes the test suite for the Datacamp library.
 ## Test Overview
 
 The test suite covers:
-- ✅ Directory-based backup operations
+- ✅ Directory-based backup/restore operations
+- ✅ S3 backup/restore plumbing (unit-level; integration covered via examples)
+- ✅ Live migration workflows (routing, cutover, recovery)
 - ✅ PostgreSQL backend integration
 - ✅ MySQL backend integration
-- ✅ Redis backend integration
+- ⚠️ Redis backend integration (temporarily skipped due to an upstream konserve-redis issue; tests will detect and skip)
 - ✅ End-to-end integration workflows
 
 ## Running Tests
@@ -40,6 +42,7 @@ bb test:mysql        # MySQL tests only
 bb test:redis        # Redis tests only
 bb test:backend      # All backend tests (Postgres, MySQL, Redis)
 bb test:integration  # Integration tests only
+bb test:migration    # Live migration tests (basic + complex scenarios)
 ```
 
 ### Manual Test Execution
@@ -172,7 +175,9 @@ export MYSQL_DB=datahike_test # default
 
 Tests for Redis backend integration.
 
-**Prerequisites:**
+Note: datahike-redis currently depends on konserve-redis with a known issue. The Redis tests in this repo detect the condition and skip, printing an explanatory message. Once the upstream fix is available, remove the skip and run as below.
+
+**Prerequisites (when enabled):**
 - Running Redis instance
 
 **Docker Compose Setup (Recommended):**
@@ -203,7 +208,7 @@ export REDIS_PORT=6379     # default
 export REDIS_PASSWORD=     # optional
 ```
 
-**Coverage:**
+**Coverage (when enabled):**
 - Basic Redis backup
 - Memory-efficient streaming
 - Fast operations
@@ -212,7 +217,25 @@ export REDIS_PASSWORD=     # optional
 - Key expiration handling
 - Various data types
 
-### 5. Integration Tests (`datacamp.integration-test`)
+### 5. Live Migration Tests (`datacamp.migration-test`)
+
+Exercises live migration core scenarios using memory/file backends (no external services required):
+
+**Coverage:**
+- Basic migration (mem → file) with transaction capture
+- Continuous writes during migration and cutover
+- Recovery from interruptions and state corruption
+- Error injection and retry behavior
+- Concurrent migration blocking
+
+**Run:**
+```bash
+bb test:migration
+# Or only the complex 120k-entity scenario
+bb test:migration:complex
+```
+
+### 6. Integration Tests (`datacamp.integration-test`)
 
 End-to-end workflow tests.
 

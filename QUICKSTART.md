@@ -68,6 +68,52 @@ Or `deps.edn`:
 
 That's it! Your database is now backed up.
 
+### Restore from S3
+
+```clojure
+(require '[datahike.api :as d])
+(require '[datacamp.core :as backup])
+
+(def restore-conn (d/connect {:store {:backend :file :path "/tmp/restore-db"}}))
+(backup/restore-from-s3 restore-conn
+                        {:bucket "my-backups" :region "us-east-1"}
+                        backup-id
+                        :database-id "production-db")
+```
+
+### Restore from Local Directory
+
+```clojure
+(def restore-conn (d/connect {:store {:backend :file :path "/tmp/restore-db"}}))
+(backup/restore-from-directory restore-conn
+                               {:path "/backups"}
+                               backup-id
+                               :database-id "production-db")
+```
+
+### Live Migration (memory → file example)
+
+```clojure
+(require '[datacamp.migration :as migrate])
+
+(def source-conn (d/connect {:store {:backend :mem :id "live-src"}}))
+(def target-cfg  {:store {:backend :file :path "/tmp/live-target"}})
+
+;; Start migration and get a router back
+(def router (migrate/live-migrate
+             source-conn target-cfg
+             :database-id "my-db"
+             :backup-dir "/backups"
+             :progress-fn println))
+
+;; Route new writes during migration
+(router [{:user/name "Alice"}])
+(router [{:user/name "Bob"}])
+
+;; Finalize (cutover to target)
+(def result (router))
+```
+
 ## What Just Happened?
 
 The library:
@@ -289,7 +335,7 @@ Typical performance characteristics:
   - Network operations: > 50 MB/s (network bound)
 - **Compression**: 60-80% size reduction with GZIP
 
-## Example: Complete Workflow
+## Example: Complete Workflow (S3)
 
 ```clojure
 (ns my-app.backup
@@ -335,7 +381,7 @@ Typical performance characteristics:
 
 - See [examples/basic_usage.clj](examples/basic_usage.clj) for more examples
 - See [examples/advanced_usage.clj](examples/advanced_usage.clj) for advanced patterns
-- Read the [full specification](doc/spec.md) for architecture details
+- Read the [full specification](doc/spec.temp.md) for architecture details
 - Check [README.md](README.md) for complete documentation
 
 ## Getting Help
@@ -345,11 +391,10 @@ Typical performance characteristics:
 
 ## What's Next?
 
-Future versions will include:
-- **Restore operations** - Restore databases from backups
+Planned enhancements:
 - **Incremental backups** - Backup only changes since last backup
-- **Live synchronization** - Real-time replication to S3
 - **Encryption** - Encrypt backups at rest and in transit
+- **Operational tooling** - Metrics, monitoring, and rotation policies
 
 ---
 
