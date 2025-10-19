@@ -16,8 +16,9 @@
 
 (defn vec->datom-data
   "Convert a vector back to datom data map (not a Datom record, just the data)"
-  [[e a v tx added]]
-  {:e e :a a :v v :tx tx :added added})
+  [v]
+  (let [[e a v* tx added] v]
+    {:e e :a a :v v* :tx tx :added added}))
 
 (defn serialize-to-bytes
   "Serialize data to bytes using Fressian"

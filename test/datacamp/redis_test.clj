@@ -28,7 +28,7 @@
     (let [test-config (assoc redis-config
                             :store (assoc (:store redis-config)
                                         :id (str "connectivity-test-"
-                                               (java.util.UUID/randomUUID))))]
+                                               (guaranteed-unique-uuid))))]
       ;; Try to create or connect to test if it exists
       (if (d/database-exists? test-config)
         (d/delete-database test-config))
@@ -44,7 +44,7 @@
     (println "\n=== Running: test-redis-basic-backup ===")
     (testing "Basic backup with Redis backend"
       (with-test-dir test-dir
-        (let [db-id (str "redis-test-" (java.util.UUID/randomUUID))
+        (let [db-id (str "redis-test-" (guaranteed-unique-uuid))
               config (assoc redis-config
                            :store (assoc (:store redis-config) :id db-id))
               conn (create-test-db config)]
@@ -71,7 +71,7 @@
     (println "\n=== Running: test-redis-memory-efficiency ===")
     (testing "Redis backup with memory-efficient streaming"
       (with-test-dir test-dir
-        (let [db-id (str "redis-memory-" (java.util.UUID/randomUUID))
+        (let [db-id (str "redis-memory-" (guaranteed-unique-uuid))
               config (assoc redis-config
                            :store (assoc (:store redis-config) :id db-id))
               conn (create-test-db config)]
@@ -96,7 +96,7 @@
     (println "\n=== Running: test-redis-fast-operations ===")
     (testing "Redis backup speed (in-memory backend)"
       (with-test-dir test-dir
-        (let [db-id (str "redis-fast-" (java.util.UUID/randomUUID))
+        (let [db-id (str "redis-fast-" (guaranteed-unique-uuid))
               config (assoc redis-config
                            :store (assoc (:store redis-config) :id db-id))
               conn (create-test-db config)]
@@ -120,7 +120,7 @@
     (println "\n=== Running: test-redis-persistence ===")
     (testing "Redis data persistence through backup"
       (with-test-dir test-dir
-        (let [db-id (str "redis-persist-" (java.util.UUID/randomUUID))
+        (let [db-id (str "redis-persist-" (guaranteed-unique-uuid))
               config (assoc redis-config
                            :store (assoc (:store redis-config) :id db-id))
               conn (create-test-db config)]
@@ -149,8 +149,8 @@
     (println "\n=== Running: test-redis-concurrent-access ===")
     (testing "Redis concurrent backup operations"
       (with-test-dir test-dir
-        (let [db-id-1 (str "redis-conc-1-" (java.util.UUID/randomUUID))
-              db-id-2 (str "redis-conc-2-" (java.util.UUID/randomUUID))
+        (let [db-id-1 (str "redis-conc-1-" (guaranteed-unique-uuid))
+              db-id-2 (str "redis-conc-2-" (guaranteed-unique-uuid))
               config-1 (assoc redis-config
                              :store (assoc (:store redis-config) :id db-id-1))
               config-2 (assoc redis-config
@@ -183,7 +183,7 @@
     (println "\n=== Running: test-redis-key-expiration ===")
     (testing "Redis backup with non-expiring keys"
       (with-test-dir test-dir
-        (let [db-id (str "redis-expire-" (java.util.UUID/randomUUID))
+        (let [db-id (str "redis-expire-" (guaranteed-unique-uuid))
               config (assoc redis-config
                            :store (assoc (:store redis-config) :id db-id))
               conn (create-test-db config)]
@@ -214,7 +214,7 @@
     (println "\n=== Running: test-redis-data-types ===")
     (testing "Redis backup with various data types"
       (with-test-dir test-dir
-        (let [db-id (str "redis-types-" (java.util.UUID/randomUUID))
+        (let [db-id (str "redis-types-" (guaranteed-unique-uuid))
               config (assoc redis-config
                            :store (assoc (:store redis-config) :id db-id))
               conn (create-test-db config)]
@@ -241,7 +241,7 @@
     (println "\n=== Running: test-redis-cleanup ===")
     (testing "Redis cleanup after backup"
       (with-test-dir test-dir
-        (let [db-id (str "redis-cleanup-" (java.util.UUID/randomUUID))
+        (let [db-id (str "redis-cleanup-" (guaranteed-unique-uuid))
               config (assoc redis-config
                            :store (assoc (:store redis-config) :id db-id))
               conn (create-test-db config)]

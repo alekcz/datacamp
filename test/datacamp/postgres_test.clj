@@ -28,7 +28,7 @@
     (let [test-config (assoc postgres-config
                             :store (assoc (:store postgres-config)
                                         :id (str "connectivity-test-"
-                                               (java.util.UUID/randomUUID))))]
+                                               (guaranteed-unique-uuid))))]
       ;; Try to create or connect to test if it exists
       (if (d/database-exists? test-config)
         (d/delete-database test-config))
@@ -44,7 +44,7 @@
     (println "\n=== Running: test-postgres-basic-backup ===")
     (testing "Basic backup with Postgres backend"
       (with-test-dir test-dir
-        (let [db-id (str "pg-test-" (java.util.UUID/randomUUID))
+        (let [db-id (str "pg-test-" (guaranteed-unique-uuid))
               config (assoc postgres-config
                            :store (assoc (:store postgres-config) :id db-id))
               conn (create-test-db config)]
@@ -71,7 +71,7 @@
     (println "\n=== Running: test-postgres-large-dataset ===")
     (testing "Backup large dataset from Postgres"
       (with-test-dir test-dir
-        (let [db-id (str "pg-large-" (java.util.UUID/randomUUID))
+        (let [db-id (str "pg-large-" (guaranteed-unique-uuid))
               config (assoc postgres-config
                            :store (assoc (:store postgres-config) :id db-id))
               conn (create-test-db config)]
@@ -93,7 +93,7 @@
     (println "\n=== Running: test-postgres-transactions-during-backup ===")
     (testing "Backup consistency with concurrent transactions"
       (with-test-dir test-dir
-        (let [db-id (str "pg-concurrent-" (java.util.UUID/randomUUID))
+        (let [db-id (str "pg-concurrent-" (guaranteed-unique-uuid))
               config (assoc postgres-config
                            :store (assoc (:store postgres-config) :id db-id))
               conn (create-test-db config)]
@@ -127,7 +127,7 @@
     (println "\n=== Running: test-postgres-history-queries ===")
     (testing "Backup preserves transaction history"
       (with-test-dir test-dir
-        (let [db-id (str "pg-history-" (java.util.UUID/randomUUID))
+        (let [db-id (str "pg-history-" (guaranteed-unique-uuid))
               config (assoc postgres-config
                            :store (assoc (:store postgres-config) :id db-id))
               conn (create-test-db config)]
@@ -163,7 +163,7 @@
     (println "\n=== Running: test-postgres-connection-pool ===")
     (testing "Multiple connections during backup"
       (with-test-dir test-dir
-        (let [db-id (str "pg-pool-" (java.util.UUID/randomUUID))
+        (let [db-id (str "pg-pool-" (guaranteed-unique-uuid))
               config (assoc postgres-config
                            :store (assoc (:store postgres-config) :id db-id))
               conn (create-test-db config)]
@@ -191,8 +191,8 @@
     (println "\n=== Running: test-postgres-backup-restore-roundtrip ===")
     (testing "Backup and restore roundtrip with Postgres"
       (with-test-dir test-dir
-        (let [source-id (str "pg-source-" (java.util.UUID/randomUUID))
-              target-id (str "pg-target-" (java.util.UUID/randomUUID))
+        (let [source-id (str "pg-source-" (guaranteed-unique-uuid))
+              target-id (str "pg-target-" (guaranteed-unique-uuid))
               source-config (assoc postgres-config
                                   :store (assoc (:store postgres-config) :id source-id))
               target-config (assoc postgres-config

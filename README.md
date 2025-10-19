@@ -1,19 +1,20 @@
-# Datacamp - Datahike S3 Backup Library
+# Datacamp - Datahike Backup, Restore, and Live Migration
 
 > Your data can't always be on a hike. Sometimes it wants to stop and rest at camp.  
 > Datacamp helps you backup and restore your Datahike database.
 
-A production-ready backup library for Datahike databases with S3 storage integration. This library provides streaming backup operations with minimal memory footprint, crash-resilient resumable operations, and support for future live synchronization capabilities.
+A production-ready backup and migration library for Datahike databases. It provides streaming backup/restore (S3 and local directory), crash‑resilient resumable operations, and live migration (continuous capture + cutover) between backends.
 
 ## Features
 
-- **Dual Storage Options**: Backup to S3 or local directories
-- **Full Backups**: Complete database snapshots
-- **Memory Efficient**: Streaming architecture with constant memory usage
-- **Resilient**: Checkpoint-based resumable operations
-- **Human-Readable Metadata**: EDN format for easy inspection and debugging
-- **Efficient Data Storage**: Fressian binary format with GZIP compression
-- **Production Ready**: Comprehensive error handling and retry logic
+- Backup targets: S3 or local directory
+- Restore from S3 or local directory
+- Live migration: continuous capture + router-based cutover
+- Memory efficient: streaming with constant memory usage
+- Resilient: checkpointed, resumable operations
+- Human-readable metadata (EDN manifests/checkpoints)
+- Compact data files (Fressian + GZIP)
+- Comprehensive error handling and verification helpers
 
 ## Installation
 
@@ -69,6 +70,56 @@ Add to your `project.clj` or `deps.edn`:
 ;; Check the result
 (println "Backup ID:" (:backup-id result))
 (println "Location:" (:path result))
+```
+
+### Restore from S3
+
+```clojure
+(require '[datahike.api :as d])
+(require '[datacamp.core :as backup])
+
+;; Connect to a fresh/empty target database
+(def restore-conn (d/connect {:store {:backend :file :path "/tmp/restore-db"}}))
+
+;; Restore a specific backup ID
+(backup/restore-from-s3 restore-conn
+                        {:bucket "my-backups" :region "us-east-1"}
+                        backup-id
+                        :database-id "production-db")
+```
+
+### Restore from Local Directory
+
+```clojure
+(def restore-conn (d/connect {:store {:backend :file :path "/tmp/restore-db"}}))
+(backup/restore-from-directory restore-conn
+                               {:path "/backups"}
+                               backup-id
+                               :database-id "production-db")
+```
+
+### Live Migration (memory → file example)
+
+```clojure
+(require '[datacamp.migration :as migrate])
+
+(def source-conn (d/connect {:store {:backend :mem :id "live-src"}}))
+(def target-cfg  {:store {:backend :file :path "/tmp/live-target"}})
+
+;; Start migration and get a router back
+(def router (migrate/live-migrate
+             source-conn target-cfg
+             :database-id "my-db"
+             :backup-dir "/backups"
+             :progress-fn println))
+
+;; Route new writes during migration
+(router [{:user/name "Alice"}])
+(router [{:user/name "Bob"}])
+
+;; Finalize (cutover to target)
+(def result (router))
+;; => {:status :completed, :target-conn <...>, :migration-id "..."}
 ```
 
 ## Usage
@@ -206,15 +257,14 @@ The library follows these design principles:
 
 ## Roadmap
 
-This is the first version (Phase 1) with basic backup functionality. Future phases will include:
+Current release includes full backup, restore (S3 and directory), and live migration. Upcoming work:
 
-- **Phase 2**: Restore operations
-- **Phase 3**: Advanced resumable operations
-- **Phase 4**: Incremental backups
-- **Phase 5**: Live synchronization
-- **Phase 6**: Encryption support
+- Incremental/delta backups
+- Advanced resumability and resumable uploads across sessions
+- Encryption at rest/in transit
+- Cloud‑native operational tooling and metrics
 
-See [doc/spec.md](doc/spec.md) for the complete specification and roadmap.
+See the full specification in [doc/spec.temp.md](doc/spec.temp.md).
 
 ## Requirements
 
@@ -250,12 +300,14 @@ The library includes comprehensive error handling:
 
 ## Testing
 
-```bash
-# Run tests
-lein test
+See TESTING.md for end‑to‑end and backend‑specific instructions (Babashka tasks and Docker Compose).
 
-# Run with specific AWS profile
-AWS_PROFILE=dev lein test
+```bash
+# Quick tests (no external services)
+bb test:quick
+
+# All tests (starts/stops services as needed)
+bb test:with-docker
 ```
 
 ## Contributing

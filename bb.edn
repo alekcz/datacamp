@@ -7,7 +7,7 @@
   {:doc "Start test database environment"
    :task (do
            (println "🚀 Starting test databases...")
-           (p/shell "docker-compose up -d postgres mysql redis")
+           (p/shell "docker-compose up -d postgres mysql redis minio")
            (println "\n⏳ Waiting for databases to be healthy...")
            (Thread/sleep 5000)
            (println "\n✅ Databases started!")
@@ -15,6 +15,7 @@
            (println "  PostgreSQL: localhost:5432 (postgres/postgres)")
            (println "  MySQL:      localhost:3306 (root/password)")
            (println "  Redis:      localhost:6379")
+           (println "  MinIO S3:   http://localhost:9000 (minioadmin/minioadmin)")
            (println "\n💡 Run 'bb docker:status' to check health"))}
 
   docker:stop
@@ -84,21 +85,24 @@
            (let [pg-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))
                  mysql-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))
                  redis-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))
+                 minio-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-minio")))
                  services-to-start (cond-> []
                                      (not pg-was-running) (conj "postgres")
                                      (not mysql-was-running) (conj "mysql")
-                                     (not redis-was-running) (conj "redis"))]
+                                     (not redis-was-running) (conj "redis")
+                                     (not minio-was-running) (conj "minio"))]
              (when (seq services-to-start)
                (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
                (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
                (println "⏳ Waiting for databases to be healthy...")
                (Thread/sleep 8000))
-             (println "🧪 Running all tests...\n")
-             (let [result (p/shell {:continue true} "lein test")
-                   services-to-stop (cond-> []
+            (println "🧪 Running all tests...\n")
+            (let [result (p/shell {:continue true} "lein test")
+                  services-to-stop (cond-> []
                                       (not pg-was-running) (conj "postgres")
                                       (not mysql-was-running) (conj "mysql")
-                                      (not redis-was-running) (conj "redis"))]
+                                      (not redis-was-running) (conj "redis")
+                                      (not minio-was-running) (conj "minio"))]
                (when (seq services-to-stop)
                  (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
                  (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
@@ -189,6 +193,49 @@
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
+  test:migration
+  {:doc "Run migration tests including complex and error scenarios"
+   :task (do
+           (println "🚀 Running migration tests...")
+           (println "This includes:")
+           (println "  • Basic migration scenarios")
+           (println "  • Complex migration with 120k entities")
+           (println "  • Error handling and recovery tests")
+           (println "  • Concurrent migration tests\n")
+           (p/shell "lein test datacamp.migration-test"))}
+
+  test:migration:complex
+  {:doc "Run only the complex migration test with 120k entities"
+   :task (do
+           (println "🚀 Running complex migration test with 120k entities...")
+           (println "This test will:")
+           (println "  • Create 20,000 initial entities")
+           (println "  • Write 10,000 entities/second for 10 seconds during migration")
+           (println "  • Verify all 121,000+ entities are migrated correctly\n")
+           (p/shell "lein test :only datacamp.migration-test/test-complex-migration-with-continuous-writes"))}
+
+  test:migration:errors
+  {:doc "Run only the migration error handling tests"
+   :task (do
+           (println "🚀 Running migration error handling tests...")
+           (println "This test validates:")
+           (println "  • Recovery from intermittent failures")
+           (println "  • Network-like failures with retries")
+           (println "  • State corruption recovery")
+           (println "  • Concurrent migration blocking\n")
+           (p/shell "lein test :only datacamp.migration-test/test-migration-error-handling"))}
+
+  test:schema
+  {:doc "Run schema evolution tests (no external dependencies)"
+   :task (do
+           (println "🧪 Running schema evolution tests...")
+           (println "This test validates:")
+           (println "  • Schema migration compatibility")
+           (println "  • Cardinality changes (one to many)")
+           (println "  • Unique constraint preservation")
+           (println "  • Unique constraint removal")
+           (println "  • Backup/restore with evolved schemas\n")
+           (p/shell "lein test datacamp.schema-evolution-test"))}
 
   test:backend
   {:doc "Run all backend tests (starts/stops databases as needed)"
@@ -197,27 +244,85 @@
            (let [pg-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))
                  mysql-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))
                  redis-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))
+                 minio-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-minio")))
                  services-to-start (cond-> []
                                      (not pg-was-running) (conj "postgres")
                                      (not mysql-was-running) (conj "mysql")
-                                     (not redis-was-running) (conj "redis"))]
+                                     (not redis-was-running) (conj "redis")
+                                     (not minio-was-running) (conj "minio"))]
              (when (seq services-to-start)
                (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
                (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
                (println "⏳ Waiting for databases to be healthy...")
                (Thread/sleep 8000))
              (println "🧪 Running backend tests...\n")
-             (let [result (p/shell {:continue true} "lein test datacamp.postgres-test datacamp.mysql-test datacamp.redis-test")
+             (let [result (p/shell {:continue true} "lein test datacamp.postgres-test datacamp.mysql-test datacamp.redis-test datacamp.s3-test")
                    services-to-stop (cond-> []
                                       (not pg-was-running) (conj "postgres")
                                       (not mysql-was-running) (conj "mysql")
-                                      (not redis-was-running) (conj "redis"))]
+                                      (not redis-was-running) (conj "redis")
+                                      (not minio-was-running) (conj "minio"))]
                (when (seq services-to-stop)
                  (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
                  (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 
+  test:s3
+  {:doc "Run S3 (MinIO) integration tests"
+   :task (do
+           (println "🔍 Checking MinIO status...")
+           (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true}
+                                                      "docker inspect -f '{{.State.Running}}' datacamp-minio")))]
+             (when (not was-running)
+               (println "🚀 Starting MinIO...")
+               (p/shell "docker-compose up -d minio")
+               (println "⏳ Waiting for MinIO to be healthy...")
+               (Thread/sleep 5000))
+             (println "🧪 Running S3 integration tests...\n")
+             (let [result (p/shell {:continue true}
+                                   "lein test :only datacamp.s3-test/test-s3-backup-and-restore-roundtrip")]
+               (when (not was-running)
+                 (println "\n⚙️ Stopping MinIO...")
+                 (p/shell "docker-compose stop minio"))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
+
+  ;; Coverage
+  coverage
+  {:doc "Run code coverage with cloverage (starts/stops databases as needed)"
+   :task (do
+           (println "🔍 Checking database status...")
+           (let [pg-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))
+                 mysql-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))
+                 redis-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))
+                 minio-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-minio")))
+                 services-to-start (cond-> []
+                                     (not pg-was-running) (conj "postgres")
+                                     (not mysql-was-running) (conj "mysql")
+                                     (not redis-was-running) (conj "redis")
+                                     (not minio-was-running) (conj "minio"))]
+             (when (seq services-to-start)
+               (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
+               (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
+               (println "⏳ Waiting for databases to be healthy...")
+               (Thread/sleep 8000))
+             (println "📊 Running code coverage analysis...\n")
+             (let [result (p/shell {:continue true} "lein cloverage")
+                   services-to-stop (cond-> []
+                                      (not pg-was-running) (conj "postgres")
+                                      (not mysql-was-running) (conj "mysql")
+                                      (not redis-was-running) (conj "redis")
+                                      (not minio-was-running) (conj "minio"))]
+               (when (seq services-to-stop)
+                 (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
+                 (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
+               (when (zero? (:exit result))
+                 (println "\n✅ Coverage report generated!")
+                 (println "📄 View HTML report: target/coverage/index.html"))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
 
   ;; Combined workflows
   test
@@ -281,6 +386,12 @@
            (println "  bb test:backend    - All backend tests")
            (println "  bb test:integration - Integration tests")
            (println "  bb test:complex    - Complex schema comparison test")
+           (println "  bb test:migration  - Migration tests (all scenarios)")
+           (println "  bb test:migration:complex - Complex migration (120k entities)")
+           (println "  bb test:migration:errors  - Error handling tests")
+           (println "  bb test:schema     - Schema evolution tests")
+           (println "\nCode Coverage:")
+           (println "  bb coverage        - Run code coverage analysis with cloverage")
            (println "\nDevelopment:")
            (println "  bb repl            - Start REPL")
            (println "  bb clean           - Clean build artifacts")

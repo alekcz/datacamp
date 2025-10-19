@@ -22,15 +22,16 @@
   "Read and parse EDN file from S3"
   [s3-client bucket key]
   (let [response (s3/get-object s3-client bucket key)
-        body (:Body response)]
-    (if (bytes? body)
-      (edn/read-string (String. ^bytes body "UTF-8"))
-      (edn/read-string (slurp body)))))
+        bytes (utils/response->bytes response)]
+    (when (nil? bytes)
+      (throw (IllegalArgumentException. (str "Empty S3 response body for key: " key))))
+    (edn/read-string (String. ^bytes bytes "UTF-8"))))
 
 (defn create-manifest
   "Create a human-readable manifest file"
   [{:keys [backup-id backup-type database-id datahike-version
            datom-count chunk-count total-size tx-range chunks
+           max-eid max-tx
            started-at completed-at]}]
   {:backup/id backup-id
    :backup/type backup-type
@@ -55,6 +56,8 @@
    :stats/chunk-count chunk-count
    :stats/size-bytes total-size
    :stats/tx-range tx-range
+   :stats/max-eid max-eid
+   :stats/max-tx max-tx
 
    :chunks chunks
 
@@ -67,9 +70,10 @@
 
 (defn create-chunk-metadata
   "Create metadata for a single chunk"
-  [{:keys [chunk-id tx-range datom-count size-bytes checksum s3-key s3-etag]}]
+  [{:keys [chunk-id tx-range max-eid datom-count size-bytes checksum s3-key s3-etag]}]
   {:chunk/id chunk-id
    :chunk/tx-range tx-range
+   :chunk/max-eid max-eid
    :chunk/datom-count datom-count
    :chunk/size-bytes size-bytes
    :chunk/checksum checksum

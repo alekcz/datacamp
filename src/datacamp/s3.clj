@@ -1,17 +1,51 @@
 (ns datacamp.s3
   "S3 integration layer for Datahike backups"
   (:require [cognitect.aws.client.api :as aws]
+            [cognitect.aws.credentials :as credentials]
             [taoensso.timbre :as log]
             [datacamp.utils :as utils]))
 
+(defn- parse-endpoint
+  "Parse an endpoint string like http://localhost:9000 into an endpoint-override map
+  suitable for cognitect.aws.client.api/client."
+  [endpoint]
+  (when endpoint
+    (let [u (java.net.URI. endpoint)
+          scheme (.getScheme u)
+          host (.getHost u)
+          port (.getPort u)
+          protocol (if (= scheme "http") :http :https)]
+      (cond-> {:protocol protocol :hostname host}
+        (pos? port) (assoc :port port)))))
+
 (defn create-s3-client
-  "Create an S3 client from configuration"
-  [{:keys [region endpoint path-style-access?] :as config}]
+  "Create an S3 client from configuration. Supports :endpoint like
+  \"http://localhost:9000\" for MinIO and other S3-compatible services.
+
+  Optional keys:
+  - :access-key-id, :secret-access-key for static credentials"
+  [{:keys [region endpoint access-key-id secret-access-key] :as _config}]
   (let [client-opts (cond-> {:api :s3}
                       region (assoc :region region)
-                      endpoint (assoc :endpoint-override {:protocol :https
-                                                         :hostname endpoint}))]
+                      endpoint (assoc :endpoint-override (parse-endpoint endpoint))
+                      (and access-key-id secret-access-key)
+                      (assoc :credentials-provider (credentials/basic-credentials-provider
+                                                   {:access-key-id access-key-id
+                                                    :secret-access-key secret-access-key})))]
     (aws/client client-opts)))
+
+(defn ensure-bucket
+  "Create the bucket if it does not exist. Ignores already-exists errors."
+  [s3-client bucket]
+  (try
+    (aws/invoke s3-client {:op :CreateBucket
+                           :request {:Bucket bucket}})
+    (catch Exception e
+      (let [msg (.getMessage e)]
+        (when-not (or (re-find #"BucketAlreadyOwnedByYou" msg)
+                      (re-find #"BucketAlreadyExists" msg))
+          (throw e)))))
+  true)
 
 (defn put-object
   "Upload an object to S3 with retry logic"
@@ -24,7 +58,14 @@
                      content-type (assoc :ContentType content-type)
                      metadata (assoc :Metadata metadata))]
        (log/debug "Uploading to S3:" bucket key)
-       (aws/invoke s3-client {:op :PutObject :request request})))
+       (let [response (aws/invoke s3-client {:op :PutObject :request request})]
+         ;; Check for errors in the response
+         (when-let [error (:cognitect.anomalies/category response)]
+           (throw (ex-info (str "S3 PutObject failed: " (or (:message response) error))
+                          {:bucket bucket
+                           :key key
+                           :error response})))
+         response)))
    :max-attempts 5))
 
 (defn get-object
@@ -33,9 +74,16 @@
   (utils/retry-with-backoff
    (fn []
      (log/debug "Downloading from S3:" bucket key)
-     (aws/invoke s3-client {:op :GetObject
-                           :request {:Bucket bucket
-                                    :Key key}}))
+     (let [response (aws/invoke s3-client {:op :GetObject
+                                           :request {:Bucket bucket
+                                                    :Key key}})]
+       ;; Check for errors in the response
+       (when-let [error (:cognitect.anomalies/category response)]
+         (throw (ex-info (str "S3 GetObject failed: " (or (:message response) error))
+                        {:bucket bucket
+                         :key key
+                         :error response})))
+       response))
    :max-attempts 5))
 
 (defn object-exists?
