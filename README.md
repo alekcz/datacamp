@@ -1,5 +1,8 @@
 # Datacamp - Datahike S3 Backup Library
 
+> Your data can't always be on a hike. Sometimes it wants to stop and rest at camp.  
+> Datacamp helps you backup and restore your Datahike database.
+
 A production-ready backup library for Datahike databases with S3 storage integration. This library provides streaming backup operations with minimal memory footprint, crash-resilient resumable operations, and support for future live synchronization capabilities.
 
 ## Features

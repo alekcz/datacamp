@@ -20,15 +20,18 @@
   "Check if Redis is available for testing"
   []
   (try
-    (throw 
-      (ex-info 
-        "konserve-redis has a bug so datahike-redis won't work" 
+    (throw
+      (ex-info
+        "konserve-redis has a bug so datahike-redis won't work"
         {:datahike-redis {:version "0.1.7"}
          :konserve-redis {:version "0.1.13"}}))
     (let [test-config (assoc redis-config
                             :store (assoc (:store redis-config)
                                         :id (str "connectivity-test-"
                                                (java.util.UUID/randomUUID))))]
+      ;; Try to create or connect to test if it exists
+      (if (d/database-exists? test-config)
+        (d/delete-database test-config))
       (d/create-database test-config)
       (d/delete-database test-config)
       true)

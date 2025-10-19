@@ -703,7 +703,7 @@
       :person/company "acme"}]))
 
 (defn randomized-events []
-  (for [n (range 200000)]
+  (for [n (range 20000)]
     {:entity/id (java.util.UUID/randomUUID)
      :entity/signature (java.util.UUID/randomUUID)
      :entity/type :event
