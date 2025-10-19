@@ -1078,54 +1078,60 @@ Actual: 98
 
 ## Continuous Integration
 
-### GitHub Actions Example
+Datacamp uses GitHub Actions for automated testing and continuous integration. Every push and pull request triggers a full test suite run with all backend services.
 
-```yaml
-name: Tests
+### Current CI Status
 
-on: [push, pull_request]
+[![Tests](https://github.com/alekcz/datacamp/actions/workflows/test.yml/badge.svg)](https://github.com/alekcz/datacamp/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/alekcz/datacamp/branch/main/graph/badge.svg)](https://codecov.io/gh/alekcz/datacamp)
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+### CI Workflow
 
-    steps:
-      - uses: actions/checkout@v3
+The automated CI pipeline ([`.github/workflows/test.yml`](../.github/workflows/test.yml)):
 
-      - name: Setup Java
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+1. **Triggers**: Runs on push to `main`, `master`, `migration` branches and all PRs
+2. **Services**: Spins up PostgreSQL, MySQL, Redis, and MinIO containers
+3. **Environment**: Ubuntu with Java 17 and Leiningen
+4. **Caching**: Maven dependencies cached for faster builds
+5. **Testing**: Full test suite with `lein test`
+6. **Coverage**: Generates coverage with `lein cloverage --codecov`
+7. **Reporting**: Uploads coverage to Codecov and test artifacts
+8. **Duration**: ~5-8 minutes for full test suite
 
-      - name: Install Leiningen
-        run: |
-          wget https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein
-          chmod +x lein
-          sudo mv lein /usr/local/bin/
+### Key Features
 
-      - name: Install Babashka
-        run: |
-          curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install
-          chmod +x install
-          ./install
+- **Service Health Checks**: Waits for all services to be ready before testing
+- **Environment Variables**: Configures all backend connection strings
+- **Artifact Upload**: Test results and coverage reports available for download
+- **Coverage Integration**: Automatic Codecov updates with coverage trends
+- **Fail Fast**: Stops on first failure for quick feedback
 
-      - name: Run tests
-        run: bb test:all
+### Replicating CI Locally
 
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
-        with:
-          files: target/coverage/codecov.json
+To run tests exactly as CI does:
+
+```bash
+# Start services (CI uses Docker services, we use docker-compose)
+bb docker:start
+
+# Run tests
+lein test
+
+# Generate coverage
+lein cloverage --codecov
+
+# Stop services
+bb docker:stop
 ```
 
 ### CI Best Practices
 
-1. **Cache Dependencies**: Cache Lein/Maven dependencies for faster builds
-2. **Parallel Jobs**: Run backend tests in parallel
-3. **Fail Fast**: Stop on first failure for quick feedback
-4. **Artifacts**: Upload test reports and coverage
-5. **Branch Protection**: Require tests to pass before merge
+1. **Cache Dependencies**: CI caches `~/.m2/repository` for faster builds
+2. **Service Readiness**: Always wait for health checks before testing
+3. **Fail Fast**: Test failures immediately stop the workflow
+4. **Artifacts**: Test results and coverage saved for debugging
+5. **Branch Protection**: Require CI to pass before merging PRs
+6. **Coverage Tracking**: Monitor coverage trends with Codecov
 
 ---
 

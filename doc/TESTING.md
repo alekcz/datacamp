@@ -358,39 +358,46 @@ bb docker:tools
 
 ## Continuous Integration
 
-### GitHub Actions Example
+Datacamp uses GitHub Actions for continuous integration and testing. The CI pipeline automatically:
 
-```yaml
-name: Tests
+- Runs on every push to `main`, `master`, and `migration` branches
+- Runs on all pull requests
+- Tests against PostgreSQL, MySQL, Redis, and MinIO services
+- Generates code coverage reports
+- Uploads coverage to Codecov
 
-on: [push, pull_request]
+### Build Status
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+[![Tests](https://github.com/alekcz/datacamp/actions/workflows/test.yml/badge.svg)](https://github.com/alekcz/datacamp/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/alekcz/datacamp/branch/main/graph/badge.svg)](https://codecov.io/gh/alekcz/datacamp)
 
-    steps:
-      - uses: actions/checkout@v3
+### Workflow Configuration
 
-      - uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: '11'
+The CI workflow is defined in [`.github/workflows/test.yml`](../.github/workflows/test.yml) and includes:
 
-      - name: Install Leiningen
-        run: |
-          wget https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein
-          chmod +x lein
-          sudo mv lein /usr/local/bin/
+1. **Service Setup**: PostgreSQL, MySQL, Redis, and MinIO containers
+2. **Java & Leiningen**: Java 17 with Leiningen build tool
+3. **Dependency Caching**: Maven repository caching for faster builds
+4. **Test Execution**: Full test suite with all backends
+5. **Coverage Generation**: Cloverage report with Codecov integration
+6. **Artifact Upload**: Test results and coverage reports
 
-      - name: Install Babashka
-        run: |
-          curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install
-          chmod +x install
-          ./install
+### Running Locally Like CI
 
-      - name: Start databases and run tests
-        run: bb test:with-docker
+To replicate the CI environment locally:
+
+```bash
+# Start all services (matches CI setup)
+bb docker:start
+
+# Run tests
+lein test
+
+# Generate coverage
+lein cloverage --codecov
+
+# Stop services
+bb docker:stop
 ```
 
 ## Test Coverage

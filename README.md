@@ -1,6 +1,11 @@
 # Datacamp - Datahike Backup, Restore, and Live Migration
 
-> Your data can't always be on a hike. Sometimes it wants to stop and rest at camp.  
+[![Tests](https://github.com/alekcz/datacamp/actions/workflows/test.yml/badge.svg)](https://github.com/alekcz/datacamp/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/alekcz/datacamp/branch/main/graph/badge.svg)](https://codecov.io/gh/alekcz/datacamp)
+[![Clojars Project](https://img.shields.io/clojars/v/org.alekcz/datacamp.svg)](https://clojars.org/org.alekcz/datacamp)
+[![License](https://img.shields.io/badge/License-EPL%202.0-blue.svg)](https://www.eclipse.org/legal/epl-2.0/)
+
+> Your data can't always be on a hike. Sometimes it wants to stop and rest at camp.
 > Datacamp helps you backup and restore your Datahike database.
 
 A production-ready backup and migration library for Datahike databases. It provides streaming backup/restore (S3 and local directory), crash‑resilient resumable operations, and live migration (continuous capture + cutover) between backends.
