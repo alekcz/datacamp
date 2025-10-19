@@ -5,8 +5,8 @@
 [![Clojars Project](https://img.shields.io/clojars/v/org.alekcz/datacamp.svg)](https://clojars.org/org.alekcz/datacamp)
 [![License](https://img.shields.io/badge/License-EPL%202.0-blue.svg)](https://www.eclipse.org/legal/epl-2.0/)
 
-> Your data can't always be on a hike. Sometimes it wants to stop and rest at camp.
 > Datacamp helps you backup and restore your Datahike database.
+> Your data can't always be on a hike. Sometimes it wants to stop and rest at camp.
 
 A production-ready backup and migration library for Datahike databases. It provides streaming backup/restore (S3 and local directory), crash‑resilient resumable operations, and live migration (continuous capture + cutover) between backends.
 
@@ -378,7 +378,7 @@ Contributions are welcome! Before contributing:
 
 ## License
 
-Copyright © 2025
+Copyright © 2025 Alexander Oloo
 
 This program and the accompanying materials are made available under the
 terms of the Eclipse Public License 2.0 which is available at
