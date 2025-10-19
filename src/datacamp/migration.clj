@@ -522,7 +522,10 @@
               (let [target-conn (d/connect target-config)
                     log-path (:migration/transaction-log-path migration-state)
                     capture (when log-path
-                             (start-transaction-capture source-conn log-path))]
+                             (start-transaction-capture source-conn log-path))
+                    base-router (create-transaction-router source-conn target-conn
+                                                          (atom migration-state) capture
+                                                          progress-fn complete-callback)]
 
                 ;; Apply any unapplied transactions
                 (when (and log-path (= (:migration/state migration-state) :catching-up))
@@ -533,10 +536,41 @@
                       (log/info "Applying" (count remaining) "remaining transactions...")
                       (apply-captured-transactions target-conn remaining progress-fn))))
 
-                ;; Return router for continued use
-                (create-transaction-router source-conn target-conn
-                                         (atom migration-state) capture
-                                         progress-fn complete-callback)))
+                ;; Return router for continued use - wrap it to handle finalization
+                ;; Wrap the router to handle finalization like live-migrate does
+                (fn recovery-router
+                  ([]
+                   ;; No args - finalize migration
+                   (log/info "Finalizing recovered migration...")
+                   (when capture
+                     (stop-transaction-capture capture))
+
+                   ;; Apply any remaining transactions
+                   (when log-path
+                     (let [final-txs (read-transaction-log log-path)
+                           already-applied (get-in migration-state [:migration/stats :transactions-applied] 0)
+                           remaining (drop already-applied final-txs)]
+                       (when (seq remaining)
+                         (log/info "Applying" (count remaining) "final transactions...")
+                         (apply-captured-transactions target-conn remaining progress-fn))))
+
+                   ;; Update and save migration state
+                   (let [updated-state (assoc migration-state
+                                             :migration/state :completed
+                                             :migration/completed-at (utils/current-timestamp))]
+                     (update-migration-state backup-dir database-id migration-id updated-state)
+
+                     (when complete-callback
+                       (complete-callback updated-state))
+
+                     (log/info "Migration completed successfully!")
+                     {:status :completed
+                      :target-conn target-conn
+                      :migration-id migration-id}))
+
+                  ([tx-data]
+                   ;; With transaction data - delegate to base router
+                   (base-router tx-data)))))
 
             ;; Unknown state
             (throw (ex-info "Unknown migration state" {:state (:migration/state migration-state)}))))))

@@ -173,11 +173,11 @@
                 (recovery-result [{:db/id -3 :user/name "AfterRecovery1"}])
 
                 ;; Finalize
-                (let [final-result (recovery-result)
-                      target-conn (d/connect target-config)]
+                (let [final-result (recovery-result)]
 
-                  ;; Verify all data is present
-                  (let [users (d/q '[:find [?name ...]
+                  ;; Use the target connection from the result
+                  (let [target-conn (:target-conn final-result)
+                        users (d/q '[:find [?name ...]
                                     :where [_ :user/name ?name]]
                                   @target-conn)]
                     (is (contains? (set users) "BeforeInterrupt1") "Should have pre-interrupt user 1")
@@ -457,15 +457,19 @@
                 ;; Wait for all to complete
                 (doseq [f futures] @f)
 
+                ;; Give transaction capture a moment to process
+                (Thread/sleep 500)
+
                 ;; Finalize
                 (let [result (router)
                       target-conn (:target-conn result)]
 
                   ;; Verify all concurrent users made it
-                  (let [concurrent-users (d/q '[:find [?name ...]
-                                               :where [_ :user/name ?name]
-                                               [(.startsWith ?name "ConcurrentUser")]]
-                                             @target-conn)]
+                  (let [all-users (d/q '[:find [?name ...]
+                                        :where
+                                        [_ :user/name ?name]]
+                                      @target-conn)
+                        concurrent-users (filter #(.startsWith % "ConcurrentUser") all-users)]
 
                     (is (= 10 (count concurrent-users)) "All concurrent users should be migrated"))))))
 
@@ -786,8 +790,8 @@
                                       (log/info (format "\n=== Testing: %s ===" description))
 
                                       ;; Setup initial data
-                                      @(d/transact source-conn complex-test/complex-schema)
-                                      @(d/transact source-conn initial-data)
+                                      (d/transact source-conn complex-test/complex-schema)
+                                      (d/transact source-conn initial-data)
 
                                       ;; Start migration
                                       (let [migration-id (str "error-test-" (name mode))
