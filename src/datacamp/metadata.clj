@@ -22,10 +22,10 @@
   "Read and parse EDN file from S3"
   [s3-client bucket key]
   (let [response (s3/get-object s3-client bucket key)
-        body (:Body response)]
-    (if (bytes? body)
-      (edn/read-string (String. ^bytes body "UTF-8"))
-      (edn/read-string (slurp body)))))
+        bytes (utils/response->bytes response)]
+    (when (nil? bytes)
+      (throw (IllegalArgumentException. (str "Empty S3 response body for key: " key))))
+    (edn/read-string (String. ^bytes bytes "UTF-8"))))
 
 (defn create-manifest
   "Create a human-readable manifest file"

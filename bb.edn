@@ -7,7 +7,7 @@
   {:doc "Start test database environment"
    :task (do
            (println "🚀 Starting test databases...")
-           (p/shell "docker-compose up -d postgres mysql redis")
+           (p/shell "docker-compose up -d postgres mysql redis minio")
            (println "\n⏳ Waiting for databases to be healthy...")
            (Thread/sleep 5000)
            (println "\n✅ Databases started!")
@@ -15,6 +15,7 @@
            (println "  PostgreSQL: localhost:5432 (postgres/postgres)")
            (println "  MySQL:      localhost:3306 (root/password)")
            (println "  Redis:      localhost:6379")
+           (println "  MinIO S3:   http://localhost:9000 (minioadmin/minioadmin)")
            (println "\n💡 Run 'bb docker:status' to check health"))}
 
   docker:stop
@@ -84,21 +85,24 @@
            (let [pg-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))
                  mysql-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))
                  redis-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))
+                 minio-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-minio")))
                  services-to-start (cond-> []
                                      (not pg-was-running) (conj "postgres")
                                      (not mysql-was-running) (conj "mysql")
-                                     (not redis-was-running) (conj "redis"))]
+                                     (not redis-was-running) (conj "redis")
+                                     (not minio-was-running) (conj "minio"))]
              (when (seq services-to-start)
                (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
                (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
                (println "⏳ Waiting for databases to be healthy...")
                (Thread/sleep 8000))
-             (println "🧪 Running all tests...\n")
-             (let [result (p/shell {:continue true} "lein test")
-                   services-to-stop (cond-> []
+            (println "🧪 Running all tests...\n")
+            (let [result (p/shell {:continue true} "lein test")
+                  services-to-stop (cond-> []
                                       (not pg-was-running) (conj "postgres")
                                       (not mysql-was-running) (conj "mysql")
-                                      (not redis-was-running) (conj "redis"))]
+                                      (not redis-was-running) (conj "redis")
+                                      (not minio-was-running) (conj "minio"))]
                (when (seq services-to-stop)
                  (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
                  (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
@@ -229,24 +233,47 @@
            (let [pg-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-postgres")))
                  mysql-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-mysql")))
                  redis-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-redis")))
+                 minio-was-running (= "true\n" (:out (p/shell {:out :string :continue true} "docker inspect -f '{{.State.Running}}' datacamp-minio")))
                  services-to-start (cond-> []
                                      (not pg-was-running) (conj "postgres")
                                      (not mysql-was-running) (conj "mysql")
-                                     (not redis-was-running) (conj "redis"))]
+                                     (not redis-was-running) (conj "redis")
+                                     (not minio-was-running) (conj "minio"))]
              (when (seq services-to-start)
                (println (str "🚀 Starting " (str/join ", " services-to-start) "..."))
                (p/shell (str "docker-compose up -d " (str/join " " services-to-start)))
                (println "⏳ Waiting for databases to be healthy...")
                (Thread/sleep 8000))
              (println "🧪 Running backend tests...\n")
-             (let [result (p/shell {:continue true} "lein test datacamp.postgres-test datacamp.mysql-test datacamp.redis-test")
+             (let [result (p/shell {:continue true} "lein test datacamp.postgres-test datacamp.mysql-test datacamp.redis-test datacamp.s3-test")
                    services-to-stop (cond-> []
                                       (not pg-was-running) (conj "postgres")
                                       (not mysql-was-running) (conj "mysql")
-                                      (not redis-was-running) (conj "redis"))]
+                                      (not redis-was-running) (conj "redis")
+                                      (not minio-was-running) (conj "minio"))]
                (when (seq services-to-stop)
                  (println (str "\n⚙️ Stopping " (str/join ", " services-to-stop) "..."))
                  (p/shell (str "docker-compose stop " (str/join " " services-to-stop))))
+               (when (not (zero? (:exit result)))
+                 (System/exit 1)))))}
+
+  test:s3
+  {:doc "Run S3 (MinIO) integration tests"
+   :task (do
+           (println "🔍 Checking MinIO status...")
+           (let [was-running (= "true\n" (:out (p/shell {:out :string :continue true}
+                                                      "docker inspect -f '{{.State.Running}}' datacamp-minio")))]
+             (when (not was-running)
+               (println "🚀 Starting MinIO...")
+               (p/shell "docker-compose up -d minio")
+               (println "⏳ Waiting for MinIO to be healthy...")
+               (Thread/sleep 5000))
+             (println "🧪 Running S3 integration tests...\n")
+             (let [result (p/shell {:continue true}
+                                   "lein test :only datacamp.s3-test/test-s3-backup-and-restore-roundtrip")]
+               (when (not was-running)
+                 (println "\n⚙️ Stopping MinIO...")
+                 (p/shell "docker-compose stop minio"))
                (when (not (zero? (:exit result)))
                  (System/exit 1)))))}
 

@@ -18,6 +18,7 @@
   (:require [clojure.test :refer :all]
             [datahike.api :as d]
             [datacamp.core :as backup]
+            [datacamp.s3 :as datacamp.s3]
             [datacamp.test-helpers :refer :all]
             [clojure.set :as set]))
 
@@ -782,7 +783,7 @@
             (let [datacamp-result (time (backup/backup-to-directory
                                     original-conn
                                     {:path test-dir}
-                                    :database-id "complex-original"))]
+                                     :database-id "complex-original"))]
                 (println "\nDatacamp backup completed:")
                 (println "  Backup ID:" (:backup-id datacamp-result))
                 (println "  Datom count:" (:datom-count datacamp-result))
@@ -960,6 +961,240 @@
           (finally
             (d/release original-conn)
             (d/delete-database original-cfg)))))))
+
+(deftest test-complex-backup-restore-comparison-s3
+  (testing "Complex schema: Datacamp backup and restore validation using S3 (MinIO)"
+    ;; MinIO configuration (from s3_test.clj)
+    (let [s3-config {:bucket "datacamp-test"
+                     :region "us-east-1"
+                     :endpoint "http://localhost:9000"
+                     :access-key-id "minioadmin"
+                     :secret-access-key "minioadmin"}
+          db-id (str "complex-s3-" (guaranteed-unique-uuid))]
+
+      ;; Check if MinIO is available
+      (when (try
+              (let [client (datacamp.s3/create-s3-client s3-config)]
+                (datacamp.s3/ensure-bucket client (:bucket s3-config))
+                true)
+              (catch Exception e
+                (println "S3 (MinIO) not available, skipping test:" (.getMessage e))
+                false))
+
+        ;; Create original database with complex schema
+        (let [original-cfg {:store {:backend :mem :id "complex-original-s3"}
+                            :schema-flexibility :write
+                            :keep-history? true}
+              _ (d/create-database original-cfg)
+              original-conn (d/connect original-cfg)]
+
+          (try
+            ;; Install schema
+            (d/transact original-conn {:tx-data complex-schema})
+
+            ;; Populate with rich test data
+            (let [test-data (generate-complex-test-data)
+                  rand-data (randomized-events)]
+              (d/transact original-conn {:tx-data test-data})
+              (d/transact original-conn {:tx-data rand-data}))
+
+            ;; Get original state
+            (let [original-db @original-conn
+                  original-datom-count (count (d/datoms original-db :eavt))
+                  original-entities (d/q '[:find ?e :where [?e :entity/type _]] original-db)]
+
+              (println "Original database:")
+              (println "  Datoms:" original-datom-count)
+              (println "  Entities:" (count original-entities))
+
+              ;; Export using datacamp to S3
+              (let [datacamp-result (time (backup/backup-to-s3
+                                      original-conn
+                                      s3-config
+                                      :database-id db-id))]
+                  (println "\nDatacamp S3 backup completed:")
+                  (println "  Backup ID:" (:backup-id datacamp-result))
+                  (println "  Datom count:" (:datom-count datacamp-result))
+                  (println "  Chunk count:" (:chunk-count datacamp-result))
+
+                  (is (:success datacamp-result) "Datacamp S3 backup should succeed")
+                  (is (= original-datom-count (:datom-count datacamp-result))
+                      "Datacamp S3 backup should capture all datoms")
+
+                  ;; Restore from datacamp S3
+                  (let [datacamp-restore-cfg {:store {:backend :mem :id "complex-datacamp-restore-s3"}
+                                             :schema-flexibility :write}
+                        _ (d/create-database datacamp-restore-cfg)
+                        datacamp-restore-conn (d/connect datacamp-restore-cfg)
+                        datacamp-restore-result (time (backup/restore-from-s3
+                                                datacamp-restore-conn
+                                                s3-config
+                                                (:backup-id datacamp-result)
+                                                :database-id db-id
+                                                :verify-checksums true))]
+
+                    (println "\nDatacamp S3 restored database:")
+                    (println "  Success:" (:success datacamp-restore-result))
+                    (println "  Datoms restored:" (:datoms-restored datacamp-restore-result))
+
+                    (is (:success datacamp-restore-result) "Datacamp S3 restore should succeed")
+
+                    (let [datacamp-restore-db @datacamp-restore-conn
+                          datacamp-datom-count (count (d/datoms datacamp-restore-db :eavt))
+                          datacamp-entities (d/q '[:find ?e :where [?e :entity/type _]] datacamp-restore-db)]
+
+                      (println "  Datoms:" datacamp-datom-count)
+                      (println "  Entities:" (count datacamp-entities))
+
+                      ;; Compare Original vs Datacamp
+                      (println "\n=== Comparing Databases ===")
+
+                      (let [comp (compare-databases original-db datacamp-restore-db
+                                                    "Original" "Datacamp-S3")]
+                        (println "\nOriginal vs Datacamp S3:")
+                        (println "  Common datoms:" (:common-count comp))
+                        (println "  Only in Original:" (:only-in-db1-count comp))
+                        (println "  Only in Datacamp:" (:only-in-db2-count comp))
+                        (println "  Match:" (:match? comp))
+
+                        (when-not (:match? comp)
+                          (println "\nNote: Raw datom comparison may differ due to entity ID remapping")
+                          (println "      This is acceptable as long as semantic data matches")
+                          (println "      (verified via index comparisons below)")
+                          (println "\nSample differences:")
+                          (println "  First 10 only in Original:" (:only-in-db1 comp))
+                          (println "  First 10 only in Datacamp:" (:only-in-db2 comp)))
+
+                        (println "\nRaw datom match:" (:match? comp) "(entity ID remapping is acceptable)"))
+
+                      ;; Test specific queries to verify entity integrity
+                      (println "\n=== Entity Integrity Checks ===")
+
+                      ;; Check companies
+                      (let [orig-companies (d/q '[:find ?name :where [?e :company/name ?name]] original-db)
+                            dc-companies (d/q '[:find ?name :where [?e :company/name ?name]] datacamp-restore-db)]
+                        (println "Companies:")
+                        (println "  Original:" (count orig-companies) orig-companies)
+                        (println "  Datacamp:" (count dc-companies))
+                        (is (= orig-companies dc-companies) "Company data should match"))
+
+                      ;; Check people with manager chains
+                      (let [orig-people (d/q '[:find ?name ?manager-name
+                                              :where
+                                              [?p :person/full-name ?name]
+                                              (or-join [?p ?manager-name]
+                                                (and [?p :person/manager ?m]
+                                                     [?m :person/full-name ?manager-name])
+                                                (and [(missing? $ ?p :person/manager)]
+                                                     [(identity "NO MANAGER") ?manager-name]))]
+                                            original-db)
+                            dc-people (d/q '[:find ?name ?manager-name
+                                            :where
+                                            [?p :person/full-name ?name]
+                                            (or-join [?p ?manager-name]
+                                              (and [?p :person/manager ?m]
+                                                   [?m :person/full-name ?manager-name])
+                                              (and [(missing? $ ?p :person/manager)]
+                                                   [(identity "NO MANAGER") ?manager-name]))]
+                                          datacamp-restore-db)]
+                        (println "\nPeople with managers:")
+                        (println "  Original:" (count orig-people))
+                        (println "  Datacamp:" (count dc-people))
+                        (is (= orig-people dc-people) "Person/manager relationships should match"))
+
+                      ;; Check orders with line items (component)
+                      (let [orig-orders (d/q '[:find ?num (count ?line)
+                                              :where
+                                              [?o :order/number ?num]
+                                              [?o :order/lines ?line]]
+                                            original-db)
+                            dc-orders (d/q '[:find ?num (count ?line)
+                                            :where
+                                            [?o :order/number ?num]
+                                            [?o :order/lines ?line]]
+                                          datacamp-restore-db)]
+                        (println "\nOrders with line items:")
+                        (println "  Original:" orig-orders)
+                        (println "  Datacamp:" dc-orders)
+                        (is (= orig-orders dc-orders) "Order line items should match"))
+
+                      ;; Check multi-valued attributes
+                      (let [orig-multi (d/q '[:find ?name (count ?email)
+                                             :where
+                                             [?p :person/full-name ?name]
+                                             [?p :person/email ?email]]
+                                           original-db)
+                            dc-multi (d/q '[:find ?name (count ?email)
+                                           :where
+                                           [?p :person/full-name ?name]
+                                           [?p :person/email ?email]]
+                                         datacamp-restore-db)]
+                        (println "\nMulti-valued emails:")
+                        (println "  Original:" orig-multi)
+                        (println "  Datacamp:" dc-multi)
+                        (is (= orig-multi dc-multi) "Multi-valued attributes should match"))
+
+                      ;; Check that all indices contain the same data (ignoring entity IDs)
+                      (println "\n=== Index Comparison (EAVT, AEVT, AVET) ===")
+
+                      (defn normalize-datom-for-index-comparison
+                        "Normalize datom by removing entity IDs and tx IDs, keeping only attribute-value pairs"
+                        [datom]
+                        (let [{:keys [a v added]} datom]
+                          {:a a
+                           :v (if (number? v) :ref v)  ; Normalize ref values to :ref
+                           :added added}))
+
+                      (defn get-normalized-index
+                        "Get all datoms from an index, normalized for comparison"
+                        [db index]
+                        (->> (d/datoms db index)
+                             (map normalize-datom-for-index-comparison)
+                             (frequencies)))  ; Count occurrences of each normalized datom
+
+                      ;; Compare EAVT index
+                      (let [orig-eavt (get-normalized-index original-db :eavt)
+                            dc-eavt (get-normalized-index datacamp-restore-db :eavt)]
+                        (println "EAVT index comparison:")
+                        (println "  Original unique datoms:" (count orig-eavt))
+                        (println "  Datacamp unique datoms:" (count dc-eavt))
+                        (is (= orig-eavt dc-eavt) "EAVT index should match (normalized)"))
+
+                      ;; Compare AEVT index
+                      (let [orig-aevt (get-normalized-index original-db :aevt)
+                            dc-aevt (get-normalized-index datacamp-restore-db :aevt)]
+                        (println "\nAEVT index comparison:")
+                        (println "  Original unique datoms:" (count orig-aevt))
+                        (println "  Datacamp unique datoms:" (count dc-aevt))
+                        (is (= orig-aevt dc-aevt) "AEVT index should match (normalized)"))
+
+                      ;; Compare AVET index (only for indexed attributes)
+                      (let [orig-avet (get-normalized-index original-db :avet)
+                            dc-avet (get-normalized-index datacamp-restore-db :avet)]
+                        (println "\nAVET index comparison:")
+                        (println "  Original unique datoms:" (count orig-avet))
+                        (println "  Datacamp unique datoms:" (count dc-avet))
+                        (is (= orig-avet dc-avet) "AVET index should match (normalized)"))
+
+                      (println "\n=== All S3 tests completed successfully! ===")
+
+                      ;; Cleanup Datacamp restore connection
+                      (d/release datacamp-restore-conn)
+                      (d/delete-database datacamp-restore-cfg))
+
+                    ;; Cleanup S3 test data
+                    (try
+                      (let [client (datacamp.s3/create-s3-client s3-config)
+                            prefix (str "datahike-backups/" db-id "/")
+                            objects (datacamp.s3/list-objects client (:bucket s3-config) prefix)]
+                        (doseq [obj objects]
+                          (datacamp.s3/delete-object client (:bucket s3-config) (:key obj))))
+                      (catch Exception e
+                        (println "Warning: Failed to clean up S3 test data:" (.getMessage e)))))))
+
+            (finally
+              (d/release original-conn)
+              (d/delete-database original-cfg))))))))
 
 (comment
   (run-tests 'datacamp.complex-test))

@@ -376,7 +376,8 @@
                                restore-conn
                                {:path test-dir}
                                "non-existent-backup-id"
-                               :database-id "missing-db")]
+                               :database-id "missing-db"
+                               :suppress-error-logging true)]
 
             (is (not (:success restore-result))
                 "Restore of non-existent backup should fail")

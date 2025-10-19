@@ -41,6 +41,7 @@ bb test:postgres     # PostgreSQL tests only
 bb test:mysql        # MySQL tests only
 bb test:redis        # Redis tests only
 bb test:backend      # All backend tests (Postgres, MySQL, Redis)
+bb test:s3           # S3 (MinIO) integration tests
 bb test:integration  # Integration tests only
 bb test:migration    # Live migration tests (basic + complex scenarios)
 ```
@@ -235,7 +236,7 @@ bb test:migration
 bb test:migration:complex
 ```
 
-### 6. Integration Tests (`datacamp.integration-test`)
+### 7. Integration Tests (`datacamp.integration-test`)
 
 End-to-end workflow tests.
 
@@ -509,3 +510,21 @@ For test-related issues:
 - Verify external services are running
 - Review environment variables
 - Check [GitHub Issues](https://github.com/alekcz/datacamp/issues)
+### 6. S3 (MinIO) Tests (`datacamp.s3-integration-test`)
+
+Tests end-to-end backup/restore against a local MinIO instance.
+
+**Prerequisites:**
+- MinIO running (Docker Compose service `minio`)
+- Credentials (defaults in tests): `minioadmin/minioadmin`
+
+**Run:**
+```bash
+bb test:s3
+```
+
+The test will:
+- Create a mem-backed Datahike database and populate it
+- Back up to S3 using the MinIO endpoint `http://localhost:9000`
+- Restore into a fresh database
+- Verify the source and target databases have equivalent datoms

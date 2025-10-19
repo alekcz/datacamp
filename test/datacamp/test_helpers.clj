@@ -195,10 +195,15 @@
 (defn assert-dbs-equivalent
   "Assert that two databases have the same datoms"
   [conn1 conn2]
-  (let [datoms1 (sort-by (juxt :e :a :v) (d/datoms @conn1 :eavt))
-        datoms2 (sort-by (juxt :e :a :v) (d/datoms @conn2 :eavt))]
+  (let [;; Get all datoms
+        all-datoms1 (d/datoms @conn1 :eavt)
+        all-datoms2 (d/datoms @conn2 :eavt)
+        ;; For transaction-independent comparison, exclude :db/txInstant datoms
+        ;; (these have transaction entity IDs which may differ between databases)
+        datoms1 (sort-by (juxt :e :a :v) (remove #(= (:a %) :db/txInstant) all-datoms1))
+        datoms2 (sort-by (juxt :e :a :v) (remove #(= (:a %) :db/txInstant) all-datoms2))]
     (is (= (count datoms1) (count datoms2))
-        "Databases should have same number of datoms")
+        "Databases should have same number of datoms (excluding txInstant)")
     ;; Compare just the data, not the transaction IDs
     (is (= (map (juxt :e :a :v) datoms1)
            (map (juxt :e :a :v) datoms2))
@@ -213,6 +218,17 @@
   [config-sym config & body]
   `(let [~config-sym ~config
          conn# (create-test-db ~config-sym)]
+     (try
+       ~@body
+       (finally
+         (cleanup-test-db ~config-sym)))))
+
+(defmacro with-empty-db
+  "Execute body with an empty database (no schema), cleaning up afterwards.
+  Use this for restore operations where the schema comes from the backup."
+  [config-sym config & body]
+  `(let [~config-sym ~config
+         conn# (create-empty-db ~config-sym)]
      (try
        ~@body
        (finally

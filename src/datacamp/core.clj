@@ -521,12 +521,14 @@
     - :database-id - Database identifier (default: \"default-db\")
     - :verify-checksums - Verify chunk checksums during restore (default: true)
     - :progress-fn - Function called with progress updates (default: nil)
+    - :suppress-error-logging - Don't log errors (useful for expected failures in tests) (default: false)
 
   Returns: Map with restore details"
-  [conn s3-config backup-id & {:keys [database-id verify-checksums progress-fn]
+  [conn s3-config backup-id & {:keys [database-id verify-checksums progress-fn suppress-error-logging]
                                 :or {database-id "default-db"
                                      verify-checksums true
-                                     progress-fn nil}}]
+                                     progress-fn nil
+                                     suppress-error-logging false}}]
   (let [s3-client (s3/create-s3-client s3-config)
         bucket (:bucket s3-config)
         prefix (or (:prefix s3-config) "datahike-backups/")
@@ -664,7 +666,8 @@
                :duration-ms duration-ms}))))
 
       (catch Exception e
-        (log/error e "Restore failed for backup" backup-id)
+        (when-not suppress-error-logging
+          (log/error e "Restore failed for backup" backup-id))
 
         (when progress-fn
           (progress-fn {:stage :failed
@@ -686,12 +689,14 @@
     - :database-id - Database identifier (default: \"default-db\")
     - :verify-checksums - Verify chunk checksums during restore (default: true)
     - :progress-fn - Function called with progress updates (default: nil)
+    - :suppress-error-logging - Don't log errors (useful for expected failures in tests) (default: false)
 
   Returns: Map with restore details"
-  [conn directory-config backup-id & {:keys [database-id verify-checksums progress-fn]
+  [conn directory-config backup-id & {:keys [database-id verify-checksums progress-fn suppress-error-logging]
                                        :or {database-id "default-db"
                                             verify-checksums true
-                                            progress-fn nil}}]
+                                            progress-fn nil
+                                            suppress-error-logging false}}]
   (let [base-dir (:path directory-config)
         backup-path (dir/get-backup-path base-dir database-id backup-id)
         manifest-path (str backup-path "/manifest.edn")
@@ -827,7 +832,8 @@
                :duration-ms duration-ms}))))
 
       (catch Exception e
-        (log/error e "Restore failed for backup" backup-id)
+        (when-not suppress-error-logging
+          (log/error e "Restore failed for backup" backup-id))
 
         (when progress-fn
           (progress-fn {:stage :failed
