@@ -164,7 +164,7 @@
                              :database-id "error-test")
 
               ;; Simulate an incomplete backup
-              incomplete-id (str (java.util.UUID/randomUUID))
+              incomplete-id (str (guaranteed-unique-uuid))
               incomplete-path (datacamp.directory/get-backup-path
                               test-dir "error-test" incomplete-id)
               _ (datacamp.directory/ensure-directory incomplete-path)

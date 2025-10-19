@@ -351,81 +351,81 @@
         yesterday (java.util.Date. (- (.getTime now) (* 24 60 60 1000)))]
 
     ;; Reference data and tags
-    [{:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+    [{:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :currency
       :entity/created-at now
       :currency/code :ZAR
       :currency/decimals 2}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :currency
       :entity/created-at now
       :currency/code :USD
       :currency/decimals 2}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :currency
       :entity/created-at now
       :currency/code :EUR
       :currency/decimals 2}
 
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :tag
       :entity/created-at now
       :tag/name :electronics}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :tag
       :entity/created-at now
       :tag/name :apparel}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :tag
       :entity/created-at now
       :tag/name :clearance}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :tag
       :entity/created-at now
       :tag/name :vip-only}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :tag
       :entity/created-at now
       :tag/name :vip}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :tag
       :entity/created-at now
       :tag/name :churn-risk}
 
      ;; Roles and permissions
      {:db/id "admin-read-perm"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :permission
       :entity/created-at now
       :permission/resource :invoice
       :permission/ops [:read :create :update :delete :settle]}
      {:db/id "admin-role"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :role
       :entity/created-at now
       :role/name :admin
       :role/permissions ["admin-read-perm"]}
      {:db/id "sales-perm"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :permission
       :entity/created-at now
       :permission/resource :order
       :permission/ops [:read :create]}
      {:db/id "sales-role"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :role
       :entity/created-at now
       :role/name :sales
@@ -433,8 +433,8 @@
 
      ;; Companies
      {:db/id "acme"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :company
       :entity/created-at now
       :entity/updated-at now
@@ -451,8 +451,8 @@
                           :address/country "South Africa"
                           :address/postal-code "8000"}]}
      {:db/id "blue"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :company
       :entity/created-at now
       :company/name "Blue Logistics"
@@ -464,8 +464,8 @@
 
      ;; People (with manager chains and multi-valued emails)
      {:db/id "ceo"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :person
       :entity/created-at now
       :person/full-name "Alice Smith"
@@ -480,8 +480,8 @@
                          :address/country "South Africa"
                          :address/postal-code "0001"}]}
      {:db/id "manager1"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :person
       :entity/created-at now
       :person/full-name "Bob Johnson"
@@ -491,8 +491,8 @@
       :person/manager "ceo"
       :person/roles ["sales-role"]}
      {:db/id "employee1"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :person
       :entity/created-at now
       :person/full-name "Carol Davis"
@@ -500,8 +500,8 @@
       :person/company "acme"
       :person/manager "manager1"}
      {:db/id "employee2"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :person
       :entity/created-at now
       :person/full-name "Dave Wilson"
@@ -510,8 +510,8 @@
       :person/manager "manager1"
       :person/tags [[:tag/name :churn-risk]]}
      {:db/id "blue-ceo"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :person
       :entity/created-at now
       :person/full-name "Eve Brown"
@@ -521,8 +521,8 @@
 
      ;; Products
      {:db/id "prod1"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :product
       :entity/created-at now
       :product/sku "LAPTOP-001"
@@ -532,8 +532,8 @@
       :product/currency [:currency/code :ZAR]
       :product/tags [[:tag/name :electronics]]}
      {:db/id "prod2"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :product
       :entity/created-at now
       :product/sku "SHIRT-001"
@@ -543,8 +543,8 @@
       :product/currency [:currency/code :ZAR]
       :product/tags [[:tag/name :apparel]]}
      {:db/id "prod3"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :product
       :entity/created-at now
       :product/sku "MOUSE-CLEAR"
@@ -556,8 +556,8 @@
 
      ;; Orders with line items (component)
      {:db/id "order1"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :order
       :entity/created-at yesterday
       :order/number "ORD-2024-001"
@@ -569,8 +569,8 @@
                     :line/qty 5
                     :line/unit-price 99.99M}]}
      {:db/id "order2"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :order
       :entity/created-at now
       :order/number "ORD-2024-002"
@@ -581,8 +581,8 @@
 
      ;; Invoices
      {:db/id "inv1"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :invoice
       :entity/created-at yesterday
       :entity/updated-at now
@@ -596,8 +596,8 @@
                       :line/qty 5
                       :line/unit-price 99.99M}]}
      {:db/id "inv2"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :invoice
       :entity/created-at now
       :invoice/number "INV-2024-002"
@@ -605,20 +605,20 @@
       :invoice/status :sent}
 
      ;; Payments
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :payment
       :entity/created-at now
-      :payment/idempotency-key (java.util.UUID/randomUUID)
+      :payment/idempotency-key (guaranteed-unique-uuid)
       :payment/invoice "inv1"
       :payment/amount 10000.00M
       :payment/currency [:currency/code :ZAR]
       :payment/method :card}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :payment
       :entity/created-at now
-      :payment/idempotency-key (java.util.UUID/randomUUID)
+      :payment/idempotency-key (guaranteed-unique-uuid)
       :payment/invoice "inv1"
       :payment/amount 5000.00M
       :payment/currency [:currency/code :ZAR]
@@ -626,8 +626,8 @@
 
      ;; Subscriptions
      {:db/id "sub1"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :subscription
       :entity/created-at yesterday
       :subscription/code "SUB-ACME-PRO-001"
@@ -635,8 +635,8 @@
       :subscription/plan :pro
       :subscription/status :active
       :subscription/started-at yesterday}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :subscription
       :entity/created-at yesterday
       :entity/updated-at now
@@ -649,16 +649,16 @@
 
      ;; Devices
      {:db/id "device1"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :device
       :entity/created-at now
       :device/serial "PHONE-001-ABC"
       :device/owner "ceo"
       :device/kind :phone}
      {:db/id "device2"
-      :entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+      :entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :device
       :entity/created-at now
       :device/serial "POS-ACME-001"
@@ -666,24 +666,24 @@
       :device/kind :pos}
 
      ;; Events
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :event
       :entity/created-at now
       :event/type :audit/login
       :event/at now
       :event/subject "ceo"
       :event/data "{\"ip\":\"192.168.1.1\",\"device\":\"laptop\"}"}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :event
       :entity/created-at now
       :event/type :order/placed
       :event/at yesterday
       :event/subject "order1"
       :event/data "{\"channel\":\"web\",\"promo\":\"SUMMER2024\"}"}
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :event
       :entity/created-at now
       :event/type :device/reading
@@ -692,8 +692,8 @@
       :event/data "{\"temperature\":22.5,\"humidity\":45}"}
 
      ;; Soft deleted entity
-     {:entity/id (java.util.UUID/randomUUID)
-      :entity/signature (java.util.UUID/randomUUID)
+     {:entity/id (guaranteed-unique-uuid)
+      :entity/signature (guaranteed-unique-uuid)
       :entity/type :person
       :entity/created-at yesterday
       :entity/updated-at now
@@ -704,8 +704,8 @@
 
 (defn randomized-events []
   (for [n (range 20000)]
-    {:entity/id (java.util.UUID/randomUUID)
-     :entity/signature (java.util.UUID/randomUUID)
+    {:entity/id (guaranteed-unique-uuid)
+     :entity/signature (guaranteed-unique-uuid)
      :entity/type :event
      :entity/created-at (java.util.Date. (- (.getTime (java.util.Date.)) (* n 60 60 1000)))
      :event/type (nth [:device/reading :audit/login :order/placed :order/shipped :order/cancelled] (rand-int 5))

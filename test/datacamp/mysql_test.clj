@@ -28,7 +28,7 @@
     (let [test-config (assoc mysql-config
                             :store (assoc (:store mysql-config)
                                         :id (str "connectivity-test-"
-                                               (java.util.UUID/randomUUID))))]
+                                               (guaranteed-unique-uuid))))]
       ;; Try to create or connect to test if it exists
       (if (d/database-exists? test-config)
         (d/delete-database test-config))
@@ -44,7 +44,7 @@
     (testing "Basic backup with MySQL backend"
       (println "\n=== Running: test-mysql-basic-backup ===")
       (with-test-dir test-dir
-        (let [db-id (str "mysql-test-" (java.util.UUID/randomUUID))
+        (let [db-id (str "mysql-test-" (guaranteed-unique-uuid))
               config (assoc mysql-config
                            :store (assoc (:store mysql-config) :id db-id))
               conn (create-test-db config)]
@@ -75,7 +75,7 @@
     (testing "Backup large dataset from MySQL"
       (println "\n=== Running: test-mysql-large-dataset ===")
       (with-test-dir test-dir
-        (let [db-id (str "mysql-large-" (java.util.UUID/randomUUID))
+        (let [db-id (str "mysql-large-" (guaranteed-unique-uuid))
               config (assoc mysql-config
                            :store (assoc (:store mysql-config) :id db-id))
               conn (create-test-db config)]
@@ -97,7 +97,7 @@
     (println "\n=== Running: test-mysql-utf8-support ===")
     (testing "MySQL UTF-8 character support"
       (with-test-dir test-dir
-        (let [db-id (str "mysql-utf8-" (java.util.UUID/randomUUID))
+        (let [db-id (str "mysql-utf8-" (guaranteed-unique-uuid))
               config (assoc mysql-config
                            :store (assoc (:store mysql-config) :id db-id))
               conn (create-test-db config)]
@@ -129,7 +129,7 @@
     (println "\n=== Running: test-mysql-transactions ===")
     (testing "MySQL transaction handling during backup"
       (with-test-dir test-dir
-        (let [db-id (str "mysql-tx-" (java.util.UUID/randomUUID))
+        (let [db-id (str "mysql-tx-" (guaranteed-unique-uuid))
               config (assoc mysql-config
                            :store (assoc (:store mysql-config) :id db-id))
               conn (create-test-db config)]
@@ -161,7 +161,7 @@
     (println "\n=== Running: test-mysql-performance ===")
     (testing "MySQL backup performance"
       (with-test-dir test-dir
-        (let [db-id (str "mysql-perf-" (java.util.UUID/randomUUID))
+        (let [db-id (str "mysql-perf-" (guaranteed-unique-uuid))
               config (assoc mysql-config
                            :store (assoc (:store mysql-config) :id db-id))
               conn (create-test-db config)]

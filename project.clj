@@ -14,6 +14,7 @@
   :profiles {:dev {:dependencies [[org.clojure/test.check "1.1.1"]
                                   [nubank/matcher-combinators "3.8.8"]
                                   [io.replikativ/zufall "0.2.9"]
+                                  [danlentz/clj-uuid "0.2.0"]
                                   ;; Datahike backend dependencies (test only)
                                   [io.replikativ/datahike-jdbc "0.3.50"]
                                   [io.replikativ/datahike-redis "0.1.7"]

@@ -458,9 +458,9 @@
                 (doseq [f futures] @f)
                 (log/info "Submitted" @tx-count "concurrent transactions")
 
-                ;; Give transaction capture more time to process and write to log
-                ;; The listener runs asynchronously and needs time to write to the log
-                (Thread/sleep 5000)
+                ;; Give transaction capture a moment to finish any pending writes
+                ;; With synchronous capture in the router, this can be shorter
+                (Thread/sleep 500)
 
                 ;; Finalize
                 (let [result (router)
@@ -591,8 +591,8 @@
                     ;; Helper to generate complex entities
                     generate-batch (fn [batch-num size]
                                     (vec (for [i (range size)]
-                                          {:entity/id (java.util.UUID/randomUUID)
-                                           :entity/signature (java.util.UUID/randomUUID)
+                                          {:entity/id (guaranteed-unique-uuid)
+                                           :entity/signature (guaranteed-unique-uuid)
                                            :entity/type :event
                                            :entity/created-at (java.util.Date.)
                                            :event/type (rand-nth [:device/reading :audit/login
@@ -869,11 +869,11 @@
             (test-error-recovery
              :fail-every-third
              "Intermittent transaction failures (every 3rd fails)"
-             [{:entity/id (java.util.UUID/randomUUID)
+             [{:entity/id (guaranteed-unique-uuid)
                :entity/type :company
                :company/name "Test Company"}]
              (for [i (range 15)]
-               [{:entity/id (java.util.UUID/randomUUID)
+               [{:entity/id (guaranteed-unique-uuid)
                  :entity/type :event
                  :event/type :test
                  :event/at (java.util.Date.)
@@ -883,12 +883,12 @@
             (test-error-recovery
              :fail-after-5
              "Failures after 5 successful transactions"
-             [{:entity/id (java.util.UUID/randomUUID)
+             [{:entity/id (guaranteed-unique-uuid)
                :entity/type :product
                :product/sku "TEST-001"
                :product/name "Test Product"}]
              (for [i (range 10)]
-               [{:entity/id (java.util.UUID/randomUUID)
+               [{:entity/id (guaranteed-unique-uuid)
                  :entity/type :event
                  :event/type :product-view
                  :event/at (java.util.Date.)
@@ -901,7 +901,7 @@
                   max-network-fails 3]
 
               ;; Setup data
-              @(d/transact source-conn [{:entity/id (java.util.UUID/randomUUID)
+              @(d/transact source-conn [{:entity/id (guaranteed-unique-uuid)
                                         :entity/type :test
                                         :test/name "Network Test"}])
 
@@ -914,7 +914,7 @@
 
                 ;; Simulate network failures with retries
                 (dotimes [attempt 5]
-                  (let [tx-data [{:entity/id (java.util.UUID/randomUUID)
+                  (let [tx-data [{:entity/id (guaranteed-unique-uuid)
                                  :entity/type :event
                                  :event/type :network-test
                                  :event/at (java.util.Date.)
@@ -979,7 +979,7 @@
                            :database-id "corruption-test"
                            :backup-dir test-dir)]
 
-                (router [{:entity/id (java.util.UUID/randomUUID)
+                (router [{:entity/id (guaranteed-unique-uuid)
                          :entity/type :recovery-test}])
 
                 (let [result (router)]
@@ -1008,7 +1008,7 @@
                     "Second migration should be blocked")
 
                 ;; Complete first migration
-                (router-1 [{:entity/id (java.util.UUID/randomUUID)
+                (router-1 [{:entity/id (guaranteed-unique-uuid)
                            :entity/type :concurrent-test}])
                 (router-1)
 
@@ -1019,7 +1019,7 @@
                                :database-id "concurrent-test"
                                :backup-dir test-dir)]
 
-                  (router-2 [{:entity/id (java.util.UUID/randomUUID)
+                  (router-2 [{:entity/id (guaranteed-unique-uuid)
                              :entity/type :concurrent-test-2}])
 
                   (let [result (router-2)]

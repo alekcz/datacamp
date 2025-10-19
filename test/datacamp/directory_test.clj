@@ -131,7 +131,7 @@
                                                          :database-id "cleanup-test")
 
               ;; Create an incomplete backup (simulate by not marking complete)
-              incomplete-id (str (java.util.UUID/randomUUID))
+              incomplete-id (str (guaranteed-unique-uuid))
               incomplete-path (dir/get-backup-path test-dir "cleanup-test" incomplete-id)
               _ (dir/ensure-directory incomplete-path)
               _ (meta/write-edn-to-file

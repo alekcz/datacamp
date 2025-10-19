@@ -98,11 +98,13 @@
                            :t (:tx datom)
                            :added (:added datom)}))
                       tx-data)]
-    (.write writer (pr-str {:tx/id tx-id
-                            :tx/data tx-maps
-                            :tx/timestamp (utils/current-timestamp)}))
-    (.write writer "\n")
-    (.flush writer)))
+    ;; Synchronize writes to prevent concurrent writes from interleaving
+    (locking writer
+      (.write writer (pr-str {:tx/id tx-id
+                              :tx/data tx-maps
+                              :tx/timestamp (utils/current-timestamp)}))
+      (.write writer "\n")
+      (.flush writer))))
 
 (defn start-transaction-capture
   "Start capturing transactions from source database"
@@ -233,6 +235,20 @@
              (swap! pending-txs conj {:tx-data tx-data
                                      :result result
                                      :timestamp (System/currentTimeMillis)})
+             ;; Also capture transaction directly from the result to ensure we don't miss any
+             (when (and capture (:file-writer capture))
+               (try
+                 (let [tx-report result
+                       ;; Find the tx entity id from the datoms
+                       tx-datoms (:tx-data tx-report)
+                       tx-id (some #(when (= (:a %) :db/txInstant) (:e %)) tx-datoms)
+                       ;; Filter out the transaction metadata datoms
+                       user-datoms (vec (filter #(not= (:e %) tx-id) tx-datoms))]
+                   (when (seq user-datoms)
+                     (write-transaction-to-log (:file-writer capture) user-datoms tx-id)
+                     (swap! (:captured-count capture) inc)))
+                 (catch Exception e
+                   (log/error e "Failed to capture transaction from router"))))
              result)
            (catch Exception e
              (log/error e "Failed to transact to source database")

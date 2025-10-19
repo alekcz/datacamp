@@ -6,7 +6,8 @@
             [datacamp.directory :as dir]
             [clojure.java.io :as io]
             [zufall.core :refer [rand-german-mammal]]
-            [taoensso.timbre :as timbre])
+            [taoensso.timbre :as timbre]
+            [clj-uuid :as uuid])
   (:import [java.io File]
            [java.util UUID]))
 
@@ -47,6 +48,9 @@
    {:db/ident :post/created-at
     :db/valueType :db.type/instant
     :db/cardinality :db.cardinality/one}])
+
+(defn guaranteed-unique-uuid []
+  (uuid/v6))
 
 (defn generate-test-users
   "Generate test user data"
