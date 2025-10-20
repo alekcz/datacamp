@@ -11,6 +11,7 @@ jobs:
 
     strategy:
       fail-fast: false
+      max-parallel: 1  # Run sequentially to avoid resource contention
       matrix:
         java: ['11', '17', '21']
 
