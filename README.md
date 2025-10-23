@@ -239,7 +239,7 @@ Or from Clojure:
 {:bucket "my-backups"           ; Required: S3 bucket name
  :region "us-east-1"            ; Required: AWS region
  :prefix "production/"          ; Optional: Key prefix
- :endpoint "localhost:9000"     ; Optional: Custom endpoint (for MinIO, etc.)
+ :endpoint "localhost:4566"     ; Optional: Custom endpoint (for LocalStack, etc.)
  :path-style-access? true}      ; Optional: Use path-style access
 ```
 

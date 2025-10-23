@@ -261,13 +261,13 @@ s3://my-backups/
 
 ## S3-Compatible Storage
 
-### MinIO
+### LocalStack (or other S3-compatible services)
 
 ```clojure
 (backup/backup-to-s3 conn
                      {:bucket "my-backups"
                       :region "us-east-1"
-                      :endpoint "minio.example.com:9000"
+                      :endpoint "localhost:4566"
                       :path-style-access? true}
                      :database-id "my-db")
 ```

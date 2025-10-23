@@ -37,7 +37,7 @@ Datahike is a powerful durable Datalog database, but it lacks built-in backup, r
 Datacamp addresses these challenges by providing:
 
 - **Streaming Backup/Restore**: Process databases of any size with constant memory usage
-- **Multiple Storage Backends**: S3, S3-compatible (MinIO, DigitalOcean Spaces), and local filesystem
+- **Multiple Storage Backends**: S3, S3-compatible (LocalStack, DigitalOcean Spaces), and local filesystem
 - **Live Migration**: Zero-downtime database migration with transaction capture and replay
 - **Crash Resilience**: Checkpointed operations that can resume from failure
 - **Format Flexibility**: Human-readable EDN metadata + efficient binary data files

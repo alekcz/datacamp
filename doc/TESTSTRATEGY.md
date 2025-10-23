@@ -22,7 +22,7 @@ This document explains the comprehensive testing strategy for Datacamp, detailin
 ### Core Principles
 
 1. **Comprehensive Coverage**: Every public API function has tests
-2. **Real Dependencies**: Test against real PostgreSQL, MySQL, Redis, S3 (via MinIO)
+2. **Real Dependencies**: Test against real PostgreSQL, MySQL, Redis, S3 (via LocalStack)
 3. **Property-Based Testing**: Use generative testing where appropriate (test.check)
 4. **Isolation**: Each test is independent and can run in any order
 5. **Fast Feedback**: Quick tests run without external dependencies, comprehensive tests use Docker
@@ -77,7 +77,7 @@ test/datacamp/
 ├── postgres_test.clj          - PostgreSQL backend integration tests
 ├── mysql_test.clj             - MySQL backend integration tests
 ├── redis_test.clj             - Redis backend integration tests (skipped due to upstream bug)
-├── s3_test.clj                - S3 (MinIO) integration tests
+├── s3_test.clj                - S3 (LocalStack) integration tests
 ├── migration_test.clj         - Live migration tests (all scenarios)
 ├── complex_test.clj           - Complex schema and large dataset tests
 ├── schema_evolution_test.clj  - Schema evolution and compatibility tests
@@ -90,7 +90,7 @@ test/datacamp/
 - PostgreSQL 15 (port 5432)
 - MySQL 8.0 (port 3306)
 - Redis 7 (port 6379)
-- MinIO S3 (port 9000)
+- LocalStack S3 (port 4566)
 
 **Test Data**:
 - Small: 10-100 entities (fast tests)
@@ -277,7 +277,7 @@ test/datacamp/
 
 **Purpose**: Verify S3 backup/restore against real S3-compatible storage.
 
-**Setup**: MinIO container (local S3-compatible service).
+**Setup**: LocalStack container (local S3-compatible service).
 
 **Tests**:
 
@@ -295,11 +295,11 @@ test/datacamp/
 ```clojure
 {:bucket "test-bucket"
  :region "us-east-1"
- :endpoint "http://localhost:9000"
+ :endpoint "http://localhost:4566"
  :path-style-access? true}
 ```
 
-**Key Insight**: Using MinIO allows testing real S3 operations without AWS costs or network dependency.
+**Key Insight**: Using LocalStack allows testing real S3 operations without AWS costs or network dependency.
 
 ### 6. Migration Tests (`migration_test.clj`)
 
@@ -687,7 +687,7 @@ test/datacamp/
 - **PostgreSQL**: `datacamp-postgres` on port 5432
 - **MySQL**: `datacamp-mysql` on port 3306
 - **Redis**: `datacamp-redis` on port 6379
-- **MinIO**: `datacamp-minio` on port 9000
+- **LocalStack**: `datacamp-localstack` on port 4566
 
 **Health Checks**: All services have health checks to ensure readiness.
 
@@ -736,7 +736,7 @@ bb test:quick
 bb test:postgres   # PostgreSQL tests (~30s)
 bb test:mysql      # MySQL tests (~30s)
 bb test:redis      # Redis tests (~10s, currently skipped)
-bb test:s3         # S3/MinIO tests (~30s)
+bb test:s3         # S3/LocalStack tests (~30s)
 bb test:backend    # All backend tests (~2min)
 ```
 

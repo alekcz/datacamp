@@ -20,7 +20,7 @@
 
 (defn create-s3-client
   "Create an S3 client from configuration. Supports :endpoint like
-  \"http://localhost:9000\" for MinIO and other S3-compatible services.
+  \"http://localhost:4566\" for LocalStack and other S3-compatible services.
 
   Optional keys:
   - :access-key-id, :secret-access-key for static credentials"

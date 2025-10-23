@@ -110,21 +110,22 @@ services:
     profiles:
       - tools
 
-  # MinIO for S3-compatible testing
-  minio:
-    image: minio/minio:latest
-    container_name: datacamp-minio
+  # LocalStack for S3-compatible testing
+  localstack:
+    image: localstack/localstack:latest
+    container_name: datacamp-localstack
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address :9001
+      SERVICES: s3
+      EDGE_PORT: 4566
+      DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test123
     ports:
-      - "9000:9000" # S3 API
-      - "9001:9001" # Console UI
+      - "4566:4566" # LocalStack edge port (S3 API)
     volumes:
-      - minio-data:/data
+      - localstack-data:/var/lib/localstack
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/ready || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:4566/_localstack/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -138,7 +139,7 @@ volumes:
     driver: local
   redis-data:
     driver: local
-  minio-data:
+  localstack-data:
     driver: local
 
 networks:

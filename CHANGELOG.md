@@ -24,7 +24,7 @@ All notable changes to this project will be documented in this file. This change
 ### Features
 - **Memory Efficient**: Streaming architecture with constant memory usage (< 512MB)
 - **Resilient**: Checkpoint system for tracking backup progress
-- **S3 Compatible**: Works with AWS S3 and S3-compatible storage (MinIO, etc.)
+- **S3 Compatible**: Works with AWS S3 and S3-compatible storage (LocalStack, etc.)
 - **Configurable**: Customizable chunk size, compression, and parallelism
 - **Production Ready**: Comprehensive error handling and retry logic
 

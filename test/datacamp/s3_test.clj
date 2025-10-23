@@ -1,22 +1,22 @@
 (ns datacamp.s3-test
-  "S3 tests for S3 (MinIO) backup and restore"
+  "S3 tests for S3 (LocalStack) backup and restore"
   (:require [clojure.test :refer :all]
             [datahike.api :as d]
             [datacamp.core :as backup]
             [datacamp.s3 :as s3]
             [datacamp.test-helpers :refer :all]))
 
-;; Configuration for local MinIO (see docker-compose.yml)
-(def minio-endpoint "http://localhost:9000")
+;; Configuration for local LocalStack (see docker-compose.yml)
+(def localstack-endpoint "http://localhost:4566")
 (def test-bucket "datacamp-test")
 
 (def s3-config
   {:bucket test-bucket
    :region "us-east-1"
-   :endpoint minio-endpoint
-   ;; Use MinIO credentials explicitly - don't fall back to AWS env vars
-   :access-key-id "minioadmin"
-   :secret-access-key "minioadmin"})
+   :endpoint localstack-endpoint
+   ;; Use LocalStack credentials explicitly - don't fall back to AWS env vars
+   :access-key-id "test"
+   :secret-access-key "test123"})
 
 (defn s3-available?
   []
@@ -26,7 +26,7 @@
       (s3/ensure-bucket client test-bucket)
       true)
     (catch Exception e
-      (println "S3 (MinIO) not available:" (.getMessage e))
+      (println "S3 (LocalStack) not available:" (.getMessage e))
       false)))
 
 (defn cleanup-s3-test-data
@@ -43,7 +43,7 @@
 
 (deftest ^:s3 test-s3-backup-and-restore-roundtrip
   (when (s3-available?)
-    (testing "Backup to S3 and restore roundtrip using MinIO"
+    (testing "Backup to S3 and restore roundtrip using LocalStack"
       (let [db-id (str "s3-it-" (guaranteed-unique-uuid))]
         ;; Clean up any existing test data for this db-id
         (cleanup-s3-test-data db-id)
@@ -56,7 +56,7 @@
                                      (populate-test-db source-conn :user-count 20 :post-count 40)
                                      (count (d/datoms @source-conn :eavt)))]
 
-            ;; Backup to S3 (MinIO)
+            ;; Backup to S3 (LocalStack)
             (let [result (backup/backup-to-s3 source-conn s3-config
                                               :database-id db-id)]
               (assert-backup-successful result)

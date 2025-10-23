@@ -963,22 +963,22 @@
             (d/delete-database original-cfg)))))))
 
 (deftest test-complex-backup-restore-comparison-s3
-  (testing "Complex schema: Datacamp backup and restore validation using S3 (MinIO)"
-    ;; MinIO configuration (from s3_test.clj)
+  (testing "Complex schema: Datacamp backup and restore validation using S3 (LocalStack)"
+    ;; LocalStack configuration (from s3_test.clj)
     (let [s3-config {:bucket "datacamp-test"
                      :region "us-east-1"
-                     :endpoint "http://localhost:9000"
-                     :access-key-id "minioadmin"
-                     :secret-access-key "minioadmin"}
+                     :endpoint "http://localhost:4566"
+                     :access-key-id "test"
+                     :secret-access-key "test123"}
           db-id (str "complex-s3-" (guaranteed-unique-uuid))]
 
-      ;; Check if MinIO is available
+      ;; Check if LocalStack is available
       (when (try
               (let [client (datacamp.s3/create-s3-client s3-config)]
                 (datacamp.s3/ensure-bucket client (:bucket s3-config))
                 true)
               (catch Exception e
-                (println "S3 (MinIO) not available, skipping test:" (.getMessage e))
+                (println "S3 (LocalStack) not available, skipping test:" (.getMessage e))
                 false))
 
         ;; Create original database with complex schema
