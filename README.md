@@ -18,7 +18,7 @@ A production-ready backup and migration library for Datahike databases. It provi
 - Memory efficient: streaming with constant memory usage
 - Resilient: checkpointed, resumable operations
 - Human-readable metadata (EDN manifests/checkpoints)
-- Compact data files (Fressian + GZIP)
+- Compact data files (Fressian or CBOR + GZIP)
 - Comprehensive error handling and verification helpers
 
 ## Installation
@@ -186,7 +186,9 @@ Add to your `project.clj` or `deps.edn`:
 The library uses a hybrid format strategy:
 
 - **Metadata Files (EDN)**: Human-readable format for manifests, configuration, and checkpoints
-- **Data Files (Fressian + GZIP)**: Binary format for efficient datom storage
+- **Data Files (Fressian or CBOR + GZIP)**: Binary format for efficient datom storage
+  - **Fressian** (default): Official Clojure serialization format, stable and well-tested
+  - **CBOR**: Compact Binary Object Representation, with automatic double-precision preservation
 
 ### S3 Structure
 
@@ -248,6 +250,63 @@ Or from Clojure:
 :chunk-size (* 64 1024 1024)     ; Chunk size in bytes (default: 64MB)
 :compression :gzip               ; Compression algorithm (default: :gzip)
 :parallel 4                      ; Parallel uploads (default: 4)
+:serialization :fressian         ; Serialization format: :fressian (default) or :cbor
+```
+
+### Serialization Format Selection
+
+The library supports two serialization formats:
+
+#### Fressian (Default)
+```clojure
+;; Explicit Fressian format
+(backup/backup-to-s3 conn
+                     {:bucket "my-backups" :region "us-east-1"}
+                     :database-id "my-db"
+                     :serialization :fressian)  ; or omit for default
+```
+
+**When to use Fressian:**
+- Default choice for most use cases
+- Stable, well-tested Clojure serialization format
+- Native support for all Clojure/Datahike data types
+- Good compression ratio with GZIP
+
+#### CBOR (Compact Binary Object Representation)
+```clojure
+;; Using CBOR format
+(backup/backup-to-s3 conn
+                     {:bucket "my-backups" :region "us-east-1"}
+                     :database-id "my-db"
+                     :serialization :cbor)
+```
+
+**When to use CBOR:**
+- Industry-standard binary format (RFC 8949)
+- Interoperability with non-Clojure systems
+- Automatic double-precision preservation (prevents float conversion issues)
+- Slightly more compact in some cases
+
+**Important:** CBOR includes automatic protection against double-to-float precision loss during serialization. This ensures schema compatibility when using `:db.type/double` attributes. See [datahike#633](https://github.com/replikativ/datahike/issues/633) for background on this issue.
+
+#### Restoring with Different Formats
+
+When restoring, specify the same format used during backup:
+
+```clojure
+;; Restore CBOR backup
+(backup/restore-from-s3 restore-conn
+                        {:bucket "my-backups" :region "us-east-1"}
+                        backup-id
+                        :database-id "my-db"
+                        :serialization :cbor)
+
+;; Restore Fressian backup (default)
+(backup/restore-from-s3 restore-conn
+                        {:bucket "my-backups" :region "us-east-1"}
+                        backup-id
+                        :database-id "my-db"
+                        :serialization :fressian)
 ```
 
 ## Architecture

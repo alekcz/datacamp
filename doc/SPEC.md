@@ -137,7 +137,7 @@ The backup library operates as a middleware layer between Datahike's storage bac
 
 ## Backup Format Specification
 
-### Hybrid Format Strategy: EDN Metadata + Fressian Data
+### Hybrid Format Strategy: EDN Metadata + Binary Data
 
 **Metadata Files (EDN Format):**
 - All metadata files use EDN for human readability and debugging
@@ -146,18 +146,32 @@ The backup library operates as a middleware layer between Datahike's storage bac
 - Version control friendly
 - Includes: manifest.edn, config.edn, schema.edn, checkpoint.edn
 
-**Data Files (Fressian with GZIP):**
-- Actual datom chunks use Fressian for efficiency
+**Data Files (Fressian or CBOR with GZIP):**
+
+The library supports two binary serialization formats:
+
+**Fressian (Default):**
+- Official Clojure serialization format
+- Native support for all Clojure/Datahike types
 - 60-80% compression ratio with GZIP
 - Streaming serialization support
 - Type-preserving for all Datahike types
-- Binary format optimal for large data volumes
+- Stable format specification (1.0.0)
+
+**CBOR (Compact Binary Object Representation):**
+- Industry-standard binary format (RFC 8949)
+- Interoperability with non-Clojure systems
+- Automatic double-precision preservation (prevents float conversion)
+- 60-80% compression ratio with GZIP
+- Streaming serialization support
+- Protection against [datahike#633](https://github.com/replikativ/datahike/issues/633) double/float precision issue
 
 **Rationale for Hybrid Approach:**
 - Metadata is small and benefits from human readability
 - Data is large and benefits from binary efficiency
 - Debugging is easier when metadata is inspectable
 - Performance is maintained for actual data transfer
+- Multiple format options enable interoperability and specific use-case optimization
 
 ### S3 Object Structure
 
@@ -667,16 +681,26 @@ For multiple writers scenario:
         com.cognitect.aws/endpoints {:mvn/version "1.1.12.687"}
         com.cognitect.aws/s3 {:mvn/version "868.2.1580.0"}
         org.clojure/core.async {:mvn/version "1.6.681"}
-        org.clojure/data.fressian {:mvn/version "1.0.0"}  ; Binary serialization
+        org.clojure/data.fressian {:mvn/version "1.0.0"}  ; Fressian serialization
+        mvxcvi/clj-cbor {:mvn/version "1.1.1"}             ; CBOR serialization
         org.clojure/tools.logging {:mvn/version "1.3.0"}}}
 
-;; Serialization Format Choice: Fressian vs Nippy
+;; Serialization Format Options
 ;;
-;; Using Fressian because:
+;; Fressian (Default):
 ;; - Official Clojure format with native type support
 ;; - Streaming-friendly for chunked processing
 ;; - Stable format specification (1.0.0)
 ;; - Good compression with GZIP (60-80% reduction)
+;; - Best for Clojure-to-Clojure backup/restore
+;;
+;; CBOR (Optional):
+;; - Industry-standard format (RFC 8949)
+;; - Interoperability with non-Clojure systems
+;; - Automatic double-precision preservation
+;; - Protection against datahike#633 precision loss
+;; - Good compression with GZIP (60-80% reduction)
+;; - Best for cross-platform or when double precision is critical
 ;;
 ;; Nippy alternative considered but not chosen:
 ;; - Faster but format tied to library version
