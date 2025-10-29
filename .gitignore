@@ -12,6 +12,10 @@ pom.xml.asc
 .hgignore
 .hg/
 /datahike
+/konserve
+/datahike/*
+/konserve/*
+
 *.temp.*
 
 # Test artifacts

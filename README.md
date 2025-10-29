@@ -249,23 +249,34 @@ Or from Clojure:
 :database-id "my-db"             ; Database identifier (default: "default-db")
 :chunk-size (* 64 1024 1024)     ; Chunk size in bytes (default: 64MB)
 :compression :gzip               ; Compression algorithm (default: :gzip)
-:parallel 4                      ; Number of chunks to process concurrently (default: 4)
+:parallel 1                      ; Number of chunks to process concurrently (default: 1 - sequential)
 :serialization :fressian         ; Serialization format: :fressian (default) or :cbor
 ```
 
-#### Parallel Processing
+#### Parallel Processing (Opt-in)
 
-The `:parallel` parameter controls how many chunks are processed concurrently:
-- **parallel=1**: Sequential processing (baseline, most memory efficient)
-- **parallel=4**: Default, balanced performance (~25-30% faster)
-- **parallel=8**: High-performance (~60% faster with fast networks)
-- **parallel=16**: Maximum recommended for 10Gb+ connections
+The `:parallel` parameter controls how many chunks are processed concurrently. **Default is 1 (sequential)** for memory safety:
+- **parallel=1**: Sequential processing (default, safest for memory)
+- **parallel=2-3**: Conservative parallelism for systems with limited memory
+- **parallel=4-6**: Balanced performance when memory allows (~25-30% faster)
+- **parallel=8+**: High-performance for systems with ample memory and fast networks (~60% faster)
 
-Example for large databases with fast network:
+**Memory Warning**: Each parallel chunk uses ~3x the chunk size in memory (original + serialized + compressed).
+
+Example configurations:
 ```clojure
+;; Default - sequential (safe for all memory configurations)
+(backup/backup-to-s3 conn s3-config)
+
+;; Moderate parallelism (requires ~400-600MB free heap)
 (backup/backup-to-s3 conn s3-config
-                     :chunk-size (* 512 1024 1024)  ; 512MB chunks
-                     :parallel 8)                    ; 8 concurrent uploads
+                     :chunk-size (* 64 1024 1024)   ; 64MB chunks
+                     :parallel 2)                    ; 2 concurrent
+
+;; High performance (requires 2GB+ free heap)
+(backup/backup-to-s3 conn s3-config
+                     :chunk-size (* 256 1024 1024)  ; 256MB chunks
+                     :parallel 4)                    ; 4 concurrent
 ```
 
 ### Serialization Format Selection
@@ -365,17 +376,20 @@ The library uses the AWS SDK for Clojure, which supports standard AWS credential
 
 ## Performance
 
-- **Memory Usage**: Constant O(chunk-size × parallel), typically < 512MB per chunk
+- **Memory Usage**:
+  - Sequential (default): O(chunk-size), typically < 200MB
+  - Parallel: O(chunk-size × parallel × 3), due to intermediate copies
+  - Example: 64MB chunks × 4 parallel = ~768MB heap required
 - **Throughput**:
   - Local: > 500 MB/s (disk I/O bound)
-  - Network: > 50 MB/s (network bound)
+  - Network: > 50 MB/s (sequential, network bound)
   - With parallel=8: Can saturate 10Gb connections (> 400 MB/s)
 - **Compression Ratio**: 60-80% with GZIP level 6
-- **Parallel Speedup**:
-  - parallel=1: Baseline (sequential)
-  - parallel=4: ~25-30% faster
-  - parallel=8: ~60% faster
-  - parallel=16: ~75% faster (diminishing returns)
+- **Parallel Speedup** (when enabled):
+  - parallel=1: Baseline (default, sequential)
+  - parallel=2: ~15-20% faster (minimal memory increase)
+  - parallel=4: ~25-30% faster (requires ~3x memory)
+  - parallel=8: ~60% faster (requires ~6x memory)
 
 ## Error Handling
 

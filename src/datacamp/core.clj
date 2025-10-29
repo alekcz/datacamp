@@ -13,7 +13,7 @@
 (def default-config
   {:chunk-size (* 64 1024 1024)  ; 64MB
    :compression :gzip
-   :parallel 4
+   :parallel 1                  ; Sequential by default (safer for memory)
    :storage-class :standard})
 
 ;; Public API
@@ -27,8 +27,8 @@
   - opts: Optional configuration map with:
     - :chunk-size - Size of each chunk in bytes (default: 64MB)
     - :compression - Compression algorithm (default: :gzip)
-    - :parallel - Number of chunks to process concurrently (default: 4)
-                  Values: 1 (sequential), 4 (balanced), 8 (high-performance)
+    - :parallel - Number of chunks to process concurrently (default: 1)
+                  Values: 1 (sequential, default), 2-4 (balanced), 8+ (high-performance)
     - :database-id - Custom database identifier
 
   Returns: Map with backup details including :backup-id
@@ -42,7 +42,7 @@
   [conn s3-config & {:keys [chunk-size compression parallel database-id]
                      :or {chunk-size (* 64 1024 1024)
                           compression :gzip
-                          parallel 4
+                          parallel 1
                           database-id "default-db"}}]
   (let [backup-id (utils/generate-backup-id)
         s3-client (s3/create-s3-client s3-config)
@@ -331,8 +331,8 @@
   - opts: Optional configuration map with:
     - :chunk-size - Size of each chunk in bytes (default: 64MB)
     - :compression - Compression algorithm (default: :gzip)
-    - :parallel - Number of chunks to process concurrently (default: 4)
-                  Values: 1 (sequential), 4 (balanced), 8 (high-performance)
+    - :parallel - Number of chunks to process concurrently (default: 1)
+                  Values: 1 (sequential, default), 2-4 (balanced), 8+ (high-performance)
     - :database-id - Custom database identifier (default: \"default-db\")
 
   Returns: Map with backup details including :backup-id
@@ -346,7 +346,7 @@
   [conn directory-config & {:keys [chunk-size compression parallel database-id]
                             :or {chunk-size (* 64 1024 1024)
                                  compression :gzip
-                                 parallel 4
+                                 parallel 1
                                  database-id "default-db"}}]
   (let [backup-id (utils/generate-backup-id)
         base-dir (:path directory-config)
@@ -1256,3 +1256,127 @@
   [backup-dir database-id & opts]
   (let [list-fn (requiring-resolve 'datacamp.migration/list-migrations)]
     (apply list-fn backup-dir database-id opts)))
+
+;; =============================================================================
+;; Garbage Collection
+;; =============================================================================
+
+(defn gc!
+  "Run optimized garbage collection on the database.
+
+  SAFETY: Defaults to dry-run mode. Set :dry-run false to actually delete.
+
+  Automatically resumes from checkpoint if a previous GC was interrupted.
+
+  Parameters:
+  - conn: Datahike connection
+  - opts: Configuration options
+    - :dry-run - Preview what would be deleted without actually deleting (default: true)
+    - :retention-days - Keep commits from last N days (default: 7)
+    - :batch-size - Number of keys to delete per batch (default: auto-detected)
+    - :parallel-batches - Number of batches to delete in parallel (default: auto)
+    - :checkpoint-interval - Commits between checkpoints (default: 100)
+    - :force-new - Force start new GC even if one is in progress (default: false)
+
+  Returns:
+  Map with GC results:
+  - :reachable-count - Number of items kept
+  - :deleted-count - Number of items deleted (or would-delete-count if dry-run)
+  - :duration-ms - Total time taken
+  - :resumed? - true if resumed from checkpoint
+
+  Examples:
+  ```clojure
+  ;; Dry run to see what would be deleted (default)
+  (gc! conn)
+
+  ;; Actually run GC with 30 day retention
+  (gc! conn :dry-run false :retention-days 30)
+
+  ;; Resume interrupted GC automatically
+  (gc! conn :dry-run false) ; Will resume if checkpoint exists
+  ```"
+  [conn & {:keys [dry-run retention-days batch-size parallel-batches
+                  checkpoint-interval force-new]
+           :or {dry-run true
+                retention-days 7
+                checkpoint-interval 100
+                force-new false}
+           :as opts}]
+  (let [gc-fn (requiring-resolve 'datacamp.gc/gc-storage-optimized!)
+        get-status-fn (requiring-resolve 'datacamp.gc/get-status)
+        resume-fn (requiring-resolve 'datacamp.gc/resume-gc!)
+        optimize-fn (requiring-resolve 'datacamp.gc/optimize-for-backend)
+
+        db @conn
+        status @(get-status-fn db)
+        store-config (:store (:config db))
+
+        ;; Auto-detect optimal settings if not provided
+        optimized (optimize-fn store-config)
+        final-batch-size (or batch-size (:batch-size optimized))
+        final-parallel (or parallel-batches (:parallel-batches optimized))
+
+        ;; Calculate retention date
+        retention-date (java.util.Date.
+                        (- (System/currentTimeMillis)
+                           (* retention-days 24 60 60 1000)))]
+
+    (log/info "GC requested with" (if dry-run "DRY RUN" "LIVE") "mode")
+    (when dry-run
+      (log/warn "Running in DRY RUN mode - no data will be deleted"))
+
+    ;; Check for existing GC
+    (if (and (= (:status status) :in-progress) (not force-new))
+      ;; Resume existing GC
+      (do
+        (log/info "Resuming interrupted GC" (:gc-id status)
+                  "from" (:last-checkpoint status))
+        (let [result @(resume-fn db (:gc-id status)
+                                :batch-size final-batch-size
+                                :parallel-batches final-parallel
+                                :dry-run dry-run)]
+          (assoc result :resumed? true)))
+
+      ;; Start new GC
+      (do
+        (when (= (:status status) :in-progress)
+          (log/warn "Force starting new GC, abandoning" (:gc-id status)))
+
+        (log/info "Starting new GC with" retention-days "day retention")
+        @(gc-fn db
+               :remove-before retention-date
+               :batch-size final-batch-size
+               :parallel-batches final-parallel
+               :checkpoint-interval checkpoint-interval
+               :dry-run dry-run)))))
+
+(defn gc-status
+  "Get the status of an ongoing or interrupted GC operation.
+
+  Parameters:
+  - conn: Datahike connection
+
+  Returns:
+  Map with GC status:
+  - :status - :in-progress or :no-gc-in-progress
+  - :gc-id - ID of the ongoing GC
+  - :started-at - When GC started
+  - :visited-count - Number of commits visited
+  - :reachable-count - Number of reachable items found
+  - :completed-branches - Branches processed
+  - :pending-branches - Branches remaining
+
+  Example:
+  ```clojure
+  (gc-status conn)
+  ;; => {:status :in-progress
+  ;;     :gc-id \"gc-2024-12-28\"
+  ;;     :visited-count 5000
+  ;;     :reachable-count 150000
+  ;;     :completed-branches 2
+  ;;     :pending-branches 1}
+  ```"
+  [conn]
+  (let [get-status-fn (requiring-resolve 'datacamp.gc/get-gc-status)]
+    @(get-status-fn @conn)))

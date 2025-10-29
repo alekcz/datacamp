@@ -241,34 +241,35 @@ s3://my-backups/
                      :chunk-size (* 128 1024 1024))  ; 128MB chunks
 ```
 
-### Adjust Parallelism
+### Adjust Parallelism (Opt-in)
 
-Control how many chunks are processed concurrently for better performance:
+By default, backups run sequentially (parallel=1) for memory safety. You can enable parallel processing for better performance if your system has sufficient memory:
 
 ```clojure
-;; Default (balanced performance)
+;; Default - sequential (safe for all memory configurations)
+(backup/backup-to-s3 conn s3-config
+                     :database-id "my-db")  ; parallel=1 by default
+
+;; Enable moderate parallelism (requires ~400-600MB free heap)
 (backup/backup-to-s3 conn s3-config
                      :database-id "my-db"
+                     :chunk-size (* 64 1024 1024)   ; 64MB chunks
+                     :parallel 2)  ; 2 concurrent uploads
+
+;; High-performance for systems with ample memory (requires 2GB+ free heap)
+(backup/backup-to-s3 conn s3-config
+                     :database-id "my-db"
+                     :chunk-size (* 256 1024 1024)  ; Larger chunks
                      :parallel 4)  ; 4 concurrent uploads
-
-;; High-performance for fast networks
-(backup/backup-to-s3 conn s3-config
-                     :database-id "my-db"
-                     :chunk-size (* 512 1024 1024)  ; Larger chunks
-                     :parallel 8)  ; 8 concurrent uploads
-
-;; Memory-efficient for constrained environments
-(backup/backup-to-s3 conn s3-config
-                     :database-id "my-db"
-                     :chunk-size (* 32 1024 1024)   ; Smaller chunks
-                     :parallel 2)  ; Fewer concurrent uploads
 ```
 
-**Performance Guide:**
-- `parallel=1`: Sequential (baseline speed, lowest memory)
-- `parallel=4`: Default (~25-30% faster)
-- `parallel=8`: Fast networks (~60% faster)
-- `parallel=16`: Maximum recommended
+**Memory Requirements:**
+- `parallel=1`: Default, ~200MB (safest)
+- `parallel=2`: ~400-600MB (15-20% faster)
+- `parallel=4`: ~1.5GB+ (25-30% faster)
+- `parallel=8`: ~3GB+ (60% faster)
+
+**Important**: Each parallel chunk uses ~3x the chunk size in memory due to intermediate copies (original + serialized + compressed).
 
 ### Use S3 Key Prefix
 
@@ -353,14 +354,19 @@ The library includes automatic retry with exponential backoff for:
 
 Typical performance characteristics:
 
-- **Memory Usage**: Constant O(chunk-size × parallel), typically < 512MB per chunk
+- **Memory Usage**:
+  - Sequential (default, parallel=1): O(chunk-size), typically < 200MB
+  - With parallelism: O(chunk-size × parallel × 3), due to intermediate copies
+  - Example: 64MB chunks × 2 parallel = ~384MB heap required
 - **Throughput**:
   - Local operations: > 500 MB/s (disk I/O bound)
-  - Network operations: > 50 MB/s (network bound, sequential)
+  - Network operations: > 50 MB/s (sequential, network bound)
+  - With parallel=4: Can reach 200+ MB/s on fast networks
   - With parallel=8: Can saturate 10Gb connections (> 400 MB/s)
 - **Compression**: 60-80% size reduction with GZIP
-- **Parallel Speedup**:
-  - parallel=4: ~25-30% faster than sequential
+- **Parallel Speedup** (when enabled):
+  - parallel=2: ~15-20% faster than sequential
+  - parallel=4: ~25-30% faster (requires sufficient memory)
   - parallel=8: ~60% faster with high-bandwidth connections
 
 ## Example: Complete Workflow (S3)
