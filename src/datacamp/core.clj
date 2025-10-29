@@ -27,10 +27,18 @@
   - opts: Optional configuration map with:
     - :chunk-size - Size of each chunk in bytes (default: 64MB)
     - :compression - Compression algorithm (default: :gzip)
-    - :parallel - Number of parallel uploads (default: 4)
+    - :parallel - Number of chunks to process concurrently (default: 4)
+                  Values: 1 (sequential), 4 (balanced), 8 (high-performance)
     - :database-id - Custom database identifier
 
-  Returns: Map with backup details including :backup-id"
+  Returns: Map with backup details including :backup-id
+
+  Example:
+  (backup-to-s3 conn
+                {:bucket \"my-bucket\" :region \"us-east-1\"}
+                :chunk-size (* 512 1024 1024)  ; 512MB chunks
+                :parallel 8                     ; 8 concurrent uploads
+                :database-id \"production\")"
   [conn s3-config & {:keys [chunk-size compression parallel database-id]
                      :or {chunk-size (* 64 1024 1024)
                           compression :gzip
@@ -58,7 +66,8 @@
             stats (atom {:datom-count 0
                         :chunk-count 0
                         :max-eid 0
-                        :max-tx 0})]
+                        :max-tx 0
+                        :completed-chunks #{}})]
 
         (log/info "Starting streaming backup with chunk size" datoms-per-chunk "datoms")
 
@@ -71,53 +80,85 @@
                                  (str backup-path "checkpoint.edn")
                                  checkpoint))
 
-        ;; Stream through datoms and upload chunks one at a time
-        (let [chunk-metadata
-              (vec
-               (keep-indexed
-                (fn [idx chunk]
-                  (when (seq chunk) ; Skip empty chunks
-                    (let [chunk-vec (vec chunk) ; Realize only THIS chunk
-                          chunk-size (count chunk-vec)
+        ;; Stream through datoms and upload chunks with parallelism
+        (let [;; Helper function to process a single chunk
+              process-chunk (fn [idx chunk]
+                              (when (seq chunk) ; Skip empty chunks
+                                (let [chunk-vec (vec chunk) ; Realize only THIS chunk
+                                      chunk-size (count chunk-vec)
 
-                          ;; Extract metadata from chunk
-                          min-tx (reduce min Long/MAX_VALUE (map :tx chunk-vec))
-                          max-tx (reduce max 0 (map :tx chunk-vec))
-                          max-eid (reduce max 0 (map :e chunk-vec))]
+                                      ;; Extract metadata from chunk
+                                      min-tx (reduce min Long/MAX_VALUE (map :tx chunk-vec))
+                                      max-tx (reduce max 0 (map :tx chunk-vec))
+                                      max-eid (reduce max 0 (map :e chunk-vec))]
 
-                      (log/info "Uploading chunk" idx "with" chunk-size "datoms")
+                                  (log/info "Processing chunk" idx "with" chunk-size "datoms")
 
-                      (let [chunk-data (ser/serialize-datom-chunk idx chunk-vec)
-                            compressed (comp/compress-chunk chunk-data :algorithm compression)
-                            checksum (utils/sha256 compressed)
-                            chunk-key (str backup-path "chunks/datoms-" idx ".fressian.gz")
-                            response (s3/put-object s3-client bucket chunk-key compressed
-                                                   :content-type "application/octet-stream")]
+                                  (let [chunk-data (ser/serialize-datom-chunk idx chunk-vec)
+                                        compressed (comp/compress-chunk chunk-data :algorithm compression)
+                                        checksum (utils/sha256 compressed)
+                                        chunk-key (str backup-path "chunks/datoms-" idx ".fressian.gz")]
 
-                        ;; Update stats
-                        (swap! stats (fn [s]
-                                      (-> s
-                                          (update :datom-count + chunk-size)
-                                          (update :chunk-count inc)
-                                          (update :max-eid max max-eid)
-                                          (update :max-tx max max-tx))))
+                                    ;; Return all data needed for upload and metadata
+                                    {:idx idx
+                                     :chunk-size chunk-size
+                                     :min-tx min-tx
+                                     :max-tx max-tx
+                                     :max-eid max-eid
+                                     :compressed compressed
+                                     :checksum checksum
+                                     :chunk-key chunk-key}))))
 
-                        ;; Update checkpoint
-                        (meta/update-checkpoint s3-client bucket
-                                               (str backup-path "checkpoint.edn")
-                                               {:progress/completed (inc idx)
-                                                :state/completed-chunks (set (range (inc idx)))})
+              ;; Process chunks in parallel batches
+              indexed-chunks (map-indexed vector (partition-all datoms-per-chunk datoms))
+              chunk-metadata (vec
+                             (mapcat
+                              (fn [batch]
+                                ;; Process batch of chunks in parallel
+                                (let [futures (doall
+                                              (map (fn [[idx chunk]]
+                                                    (future
+                                                      (try
+                                                        (when-let [processed (process-chunk idx chunk)]
+                                                          (log/info "Uploading chunk" (:idx processed))
+                                                          ;; Upload to S3
+                                                          (let [response (s3/put-object s3-client bucket
+                                                                                       (:chunk-key processed)
+                                                                                       (:compressed processed)
+                                                                                       :content-type "application/octet-stream")]
 
-                        (meta/create-chunk-metadata
-                         {:chunk-id idx
-                          :tx-range [min-tx max-tx]
-                          :max-eid max-eid
-                          :datom-count chunk-size
-                          :size-bytes (alength compressed)
-                          :checksum checksum
-                          :s3-key chunk-key
-                          :s3-etag (:ETag response)})))))
-                (partition-all datoms-per-chunk datoms)))]
+                                                            ;; Update stats atomically
+                                                            (swap! stats (fn [s]
+                                                                          (-> s
+                                                                              (update :datom-count + (:chunk-size processed))
+                                                                              (update :chunk-count inc)
+                                                                              (update :max-eid max (:max-eid processed))
+                                                                              (update :max-tx max (:max-tx processed)))))
+
+                                                            ;; Update checkpoint atomically
+                                                            ;; Note: In parallel mode, completed count may not be sequential
+                                                            (swap! stats update :completed-chunks conj (:idx processed))
+
+                                                            ;; Return chunk metadata
+                                                            (meta/create-chunk-metadata
+                                                             {:chunk-id (:idx processed)
+                                                              :tx-range [(:min-tx processed) (:max-tx processed)]
+                                                              :max-eid (:max-eid processed)
+                                                              :datom-count (:chunk-size processed)
+                                                              :size-bytes (alength (:compressed processed))
+                                                              :checksum (:checksum processed)
+                                                              :s3-key (:chunk-key processed)
+                                                              :s3-etag (:ETag response)})))
+                                                        (catch Exception e
+                                                          (log/error e "Failed to process chunk" idx)
+                                                          (throw e)))))
+                                                   batch))
+                                      ;; Wait for all futures in batch and collect results
+                                      results (doall (map deref futures))]
+                                  ;; Filter out nils and return results
+                                  (filter some? results)))
+                              ;; Partition indexed chunks into batches for parallel processing
+                              (partition-all parallel indexed-chunks)))]
 
           ;; Create and upload manifest using collected stats
           (let [completed-at (utils/current-timestamp)
@@ -290,12 +331,22 @@
   - opts: Optional configuration map with:
     - :chunk-size - Size of each chunk in bytes (default: 64MB)
     - :compression - Compression algorithm (default: :gzip)
+    - :parallel - Number of chunks to process concurrently (default: 4)
+                  Values: 1 (sequential), 4 (balanced), 8 (high-performance)
     - :database-id - Custom database identifier (default: \"default-db\")
 
-  Returns: Map with backup details including :backup-id"
-  [conn directory-config & {:keys [chunk-size compression database-id]
+  Returns: Map with backup details including :backup-id
+
+  Example:
+  (backup-to-directory conn
+                       {:path \"/backups\"}
+                       :chunk-size (* 256 1024 1024)  ; 256MB chunks
+                       :parallel 8                     ; 8 concurrent writes
+                       :database-id \"production\")"
+  [conn directory-config & {:keys [chunk-size compression parallel database-id]
                             :or {chunk-size (* 64 1024 1024)
                                  compression :gzip
+                                 parallel 4
                                  database-id "default-db"}}]
   (let [backup-id (utils/generate-backup-id)
         base-dir (:path directory-config)
@@ -319,7 +370,8 @@
             stats (atom {:datom-count 0
                         :chunk-count 0
                         :max-eid 0
-                        :max-tx 0})
+                        :max-tx 0
+                        :completed-chunks #{}})
 
             chunks-dir (str backup-path "/chunks")]
 
@@ -337,52 +389,83 @@
            (str backup-path "/checkpoint.edn")
            checkpoint))
 
-        ;; Stream through datoms and write chunks one at a time
-        (let [chunk-metadata
-              (vec
-               (keep-indexed
-                (fn [idx chunk]
-                  (when (seq chunk) ; Skip empty chunks
-                    (let [chunk-vec (vec chunk) ; Realize only THIS chunk
-                          chunk-size (count chunk-vec)
+        ;; Stream through datoms and write chunks with parallelism
+        (let [;; Helper function to process a single chunk
+              process-chunk (fn [idx chunk]
+                              (when (seq chunk) ; Skip empty chunks
+                                (let [chunk-vec (vec chunk) ; Realize only THIS chunk
+                                      chunk-size (count chunk-vec)
 
-                          ;; Extract metadata from chunk
-                          min-tx (reduce min Long/MAX_VALUE (map :tx chunk-vec))
-                          max-tx (reduce max 0 (map :tx chunk-vec))
-                          max-eid (reduce max 0 (map :e chunk-vec))]
+                                      ;; Extract metadata from chunk
+                                      min-tx (reduce min Long/MAX_VALUE (map :tx chunk-vec))
+                                      max-tx (reduce max 0 (map :tx chunk-vec))
+                                      max-eid (reduce max 0 (map :e chunk-vec))]
 
-                      (log/info "Writing chunk" idx "with" chunk-size "datoms")
+                                  (log/info "Processing chunk" idx "with" chunk-size "datoms")
 
-                      (let [chunk-data (ser/serialize-datom-chunk idx chunk-vec)
-                            compressed (comp/compress-chunk chunk-data :algorithm compression)
-                            checksum (utils/sha256 compressed)
-                            chunk-path (str chunks-dir "/datoms-" idx ".fressian.gz")
-                            {:keys [size]} (dir/write-file chunk-path compressed)]
+                                  (let [chunk-data (ser/serialize-datom-chunk idx chunk-vec)
+                                        compressed (comp/compress-chunk chunk-data :algorithm compression)
+                                        checksum (utils/sha256 compressed)
+                                        chunk-path (str chunks-dir "/datoms-" idx ".fressian.gz")]
 
-                        ;; Update stats
-                        (swap! stats (fn [s]
-                                      (-> s
-                                          (update :datom-count + chunk-size)
-                                          (update :chunk-count inc)
-                                          (update :max-eid max max-eid)
-                                          (update :max-tx max max-tx))))
+                                    ;; Return all data needed for writing and metadata
+                                    {:idx idx
+                                     :chunk-size chunk-size
+                                     :min-tx min-tx
+                                     :max-tx max-tx
+                                     :max-eid max-eid
+                                     :compressed compressed
+                                     :checksum checksum
+                                     :chunk-path chunk-path}))))
 
-                        ;; Update checkpoint
-                        (meta/update-checkpoint-file
-                         (str backup-path "/checkpoint.edn")
-                         {:progress/completed (inc idx)
-                          :state/completed-chunks (set (range (inc idx)))})
+              ;; Process chunks in parallel batches
+              indexed-chunks (map-indexed vector (partition-all datoms-per-chunk datoms))
+              chunk-metadata (vec
+                             (mapcat
+                              (fn [batch]
+                                ;; Process batch of chunks in parallel
+                                (let [futures (doall
+                                              (map (fn [[idx chunk]]
+                                                    (future
+                                                      (try
+                                                        (when-let [processed (process-chunk idx chunk)]
+                                                          (log/info "Writing chunk" (:idx processed))
+                                                          ;; Write to disk
+                                                          (let [{:keys [size]} (dir/write-file (:chunk-path processed)
+                                                                                              (:compressed processed))]
 
-                        (meta/create-chunk-metadata
-                         {:chunk-id idx
-                          :tx-range [min-tx max-tx]
-                          :max-eid max-eid
-                          :datom-count chunk-size
-                          :size-bytes size
-                          :checksum checksum
-                          :s3-key (str "chunks/datoms-" idx ".fressian.gz")  ; Keep for compatibility
-                          :s3-etag nil})))))
-                (partition-all datoms-per-chunk datoms)))]
+                                                            ;; Update stats atomically
+                                                            (swap! stats (fn [s]
+                                                                          (-> s
+                                                                              (update :datom-count + (:chunk-size processed))
+                                                                              (update :chunk-count inc)
+                                                                              (update :max-eid max (:max-eid processed))
+                                                                              (update :max-tx max (:max-tx processed)))))
+
+                                                            ;; Update checkpoint atomically
+                                                            ;; Note: In parallel mode, completed count may not be sequential
+                                                            (swap! stats update :completed-chunks conj (:idx processed))
+
+                                                            ;; Return chunk metadata
+                                                            (meta/create-chunk-metadata
+                                                             {:chunk-id (:idx processed)
+                                                              :tx-range [(:min-tx processed) (:max-tx processed)]
+                                                              :max-eid (:max-eid processed)
+                                                              :datom-count (:chunk-size processed)
+                                                              :size-bytes size
+                                                              :checksum (:checksum processed)
+                                                              :s3-key (str "chunks/datoms-" (:idx processed) ".fressian.gz")  ; Keep for compatibility
+                                                              :s3-etag nil})))
+                                                        (catch Exception e
+                                                          (log/error e "Failed to process chunk" idx)
+                                                          (throw e)))))
+                                                   batch))
+                                      ;; Wait for all futures in batch and collect results
+                                      results (doall (map deref futures))]
+                                  ;; Filter out nils and return results
+                                  (filter some? results)))
+                              ;; Partition indexed chunks into batches for parallel processing
+                              (partition-all parallel indexed-chunks)))]
 
           ;; Create and write manifest using collected stats
           (let [completed-at (utils/current-timestamp)
