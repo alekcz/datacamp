@@ -243,6 +243,61 @@
            (println "  • Backup/restore with evolved schemas\n")
            (p/shell "lein test datacamp.schema-evolution-test"))}
 
+  ;; Garbage Collection Tests
+  test:gc
+  {:doc "Run all garbage collection tests"
+   :task (do
+           (println "🗑️  Running garbage collection tests...")
+           (println "This includes:")
+           (println "  • Core GC functionality tests")
+           (println "  • Public API tests (datacamp.core/gc!)")
+           (println "  • Batch operations tests\n")
+           (let [result (p/shell {:continue true}
+                               "lein test datacamp.gc-test datacamp.gc-core-api-test datacamp.konserve-extensions-test")]
+             (when (not (zero? (:exit result)))
+               (System/exit 1))))}
+
+  test:gc:core
+  {:doc "Run core GC functionality tests"
+   :task (do
+           (println "🗑️  Running core GC tests...")
+           (println "This test validates:")
+           (println "  • Checkpoint save/load/resume")
+           (println "  • GC status tracking")
+           (println "  • Resumable marking phase")
+           (println "  • Batch deletion sweep")
+           (println "  • Retention policies\n")
+           (let [result (p/shell {:continue true} "lein test datacamp.gc-test")]
+             (when (not (zero? (:exit result)))
+               (System/exit 1))))}
+
+  test:gc:api
+  {:doc "Run GC public API tests"
+   :task (do
+           (println "🗑️  Running GC API tests...")
+           (println "This test validates:")
+           (println "  • datacamp.core/gc! function")
+           (println "  • Safe dry-run defaults")
+           (println "  • Auto-resume functionality")
+           (println "  • Backend optimizations")
+           (println "  • Error handling\n")
+           (let [result (p/shell {:continue true} "lein test datacamp.gc-core-api-test")]
+             (when (not (zero? (:exit result)))
+               (System/exit 1))))}
+
+  test:gc:batch
+  {:doc "Run batch operations tests"
+   :task (do
+           (println "🗑️  Running batch operations tests...")
+           (println "This test validates:")
+           (println "  • Batch dissoc, get, assoc operations")
+           (println "  • Store extensions")
+           (println "  • Backend-specific optimizations")
+           (println "  • Fallback behavior\n")
+           (let [result (p/shell {:continue true} "lein test datacamp.konserve-extensions-test")]
+             (when (not (zero? (:exit result)))
+               (System/exit 1))))}
+
   test:backend
   {:doc "Run all backend tests (starts/stops databases as needed)"
    :task (do
@@ -397,6 +452,10 @@
            (println "  bb test:migration:complex - Complex migration (120k entities)")
            (println "  bb test:migration:errors  - Error handling tests")
            (println "  bb test:schema     - Schema evolution tests")
+           (println "  bb test:gc         - All garbage collection tests")
+           (println "  bb test:gc:core    - Core GC functionality tests")
+           (println "  bb test:gc:api     - GC public API tests")
+           (println "  bb test:gc:batch   - Batch operations tests")
            (println "\nCode Coverage:")
            (println "  bb coverage        - Run code coverage analysis with cloverage")
            (println "\nDevelopment:")

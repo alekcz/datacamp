@@ -3,10 +3,10 @@
    These can be contributed upstream once battle-tested."
   (:require [konserve.core :as k]
             [konserve.protocols :as kp]
-            [clojure.core.async :refer [go-try <?]]
-            [superv.async :refer [S]]
+            [clojure.core.async :as async]
+            [superv.async :refer [go-try S <? <??]]
             [taoensso.timbre :as log])
-  (:import [java.util.concurrent Executors TimeUnit]
+  (:import [java.util.concurrent Executors TimeUnit Callable]
            [java.io File]))
 
 ;; =============================================================================
@@ -43,25 +43,32 @@
 (defn extend-s3-store-with-batch!
   "Extend an S3 store with batch operations"
   [store s3-client bucket]
-  (extend-type (class store)
+  (extend (class store)
     PBatchOperations
-    (-batch-dissoc [_ keys]
-      (go-try S
-        (s3-batch-delete! s3-client bucket keys)
-        (count keys)))
+    {:-batch-dissoc
+     (fn [_ keys]
+       (go-try S
+         (s3-batch-delete! s3-client bucket keys)
+         (count keys)))
 
-    (-batch-get [this keys]
-      (go-try S
-        ;; For S3, parallel get is often faster than batch
-        (let [futures (map #(k/get this %) keys)]
-          (<?? S (async/map vector futures)))))
+     :-batch-get
+     (fn [this keys]
+       (go-try S
+         ;; For S3, parallel get is often faster than batch
+         (let [futures (map #(go-try S
+                             (let [result (<? S (k/get this %))]
+                               [% (if (and (vector? result) (= 2 (count result)))
+                                    (second result)
+                                    result)])) keys)]
+           (into {} (<?? S (async/map vector futures))))))
 
-    (-batch-assoc [this kvs]
-      (go-try S
-        ;; S3 doesn't have batch put, but we can parallelize
-        (let [futures (map (fn [[k v]] (k/assoc this k v)) kvs)]
-          (<?? S (async/map (constantly :done) futures))
-          (count kvs))))))
+     :-batch-assoc
+     (fn [this kvs]
+       (go-try S
+         ;; S3 doesn't have batch put, but we can parallelize
+         (let [futures (map (fn [[k v]] (k/assoc this k v)) kvs)]
+           (<?? S (async/map (constantly :done) futures))
+           (count kvs))))}))
 
 ;; =============================================================================
 ;; PostgreSQL/JDBC Store Batch Operations
@@ -72,43 +79,62 @@
   [conn table-name keys]
   (when (seq keys)
     ;; PostgreSQL can handle large arrays efficiently
-    (let [sql (str "DELETE FROM " table-name " WHERE key = ANY(?)")]
-      (try
-        (jdbc/execute! conn [sql (into-array String keys)])
-        (log/debug "Deleted" (count keys) "rows from" table-name)
-        (catch Exception e
-          (log/error e "Failed to delete JDBC batch"))))))
+    (let [jdbc-execute! (try (require 'clojure.java.jdbc)
+                             (resolve 'clojure.java.jdbc/execute!)
+                             (catch Exception _ nil))]
+      (if jdbc-execute!
+        (let [sql (str "DELETE FROM " table-name " WHERE key = ANY(?)")]
+          (try
+            (jdbc-execute! conn [sql (into-array String keys)])
+            (log/debug "Deleted" (count keys) "rows from" table-name)
+            (catch Exception e
+              (log/error e "Failed to delete JDBC batch"))))
+        (log/warn "JDBC not available, skipping batch delete")))))
 
 (defn jdbc-batch-get
   "Batch get for JDBC-backed stores"
   [conn table-name keys]
   (when (seq keys)
-    (let [sql (str "SELECT key, value FROM " table-name " WHERE key = ANY(?)")
-          results (jdbc/query conn [sql (into-array String keys)])]
-      (into {} (map (juxt :key :value) results)))))
+    (let [jdbc-query (try (require 'clojure.java.jdbc)
+                         (resolve 'clojure.java.jdbc/query)
+                         (catch Exception _ nil))]
+      (if jdbc-query
+        (let [sql (str "SELECT key, value FROM " table-name " WHERE key = ANY(?)")
+              results (jdbc-query conn [sql (into-array String keys)])]
+          (into {} (map (juxt :key :value) results)))
+        {}))))
 
 (defn extend-jdbc-store-with-batch!
   "Extend a JDBC store with batch operations"
   [store conn table-name]
-  (extend-type (class store)
+  (extend (class store)
     PBatchOperations
-    (-batch-dissoc [_ keys]
-      (go-try S
-        (jdbc-batch-delete! conn table-name keys)
-        (count keys)))
+    {:-batch-dissoc
+     (fn [_ keys]
+       (go-try S
+         (jdbc-batch-delete! conn table-name keys)
+         (count keys)))
 
-    (-batch-get [_ keys]
-      (go-try S
-        (jdbc-batch-get conn table-name keys)))
+     :-batch-get
+     (fn [_ keys]
+       (go-try S
+         (jdbc-batch-get conn table-name keys)))
 
-    (-batch-assoc [this kvs]
-      (go-try S
-        ;; Use batch insert with ON CONFLICT
-        (let [sql (str "INSERT INTO " table-name " (key, value) VALUES (?, ?) "
-                      "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value")]
-          (jdbc/execute-batch! conn sql
-                              (map (fn [[k v]] [k v]) kvs))
-          (count kvs))))))
+     :-batch-assoc
+     (fn [this kvs]
+       (go-try S
+         ;; Use batch insert with ON CONFLICT
+         (let [jdbc-execute-batch! (try (require 'clojure.java.jdbc)
+                                        (resolve 'clojure.java.jdbc/execute-batch!)
+                                        (catch Exception _ nil))]
+           (if jdbc-execute-batch!
+             (let [sql (str "INSERT INTO " table-name " (key, value) VALUES (?, ?) "
+                           "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value")]
+               (jdbc-execute-batch! conn sql
+                                   (map (fn [[k v]] [k v]) kvs))
+               (count kvs))
+             (do (log/warn "JDBC not available, skipping batch assoc")
+                 0)))))}))
 
 ;; =============================================================================
 ;; File Store Batch Operations
@@ -139,33 +165,40 @@
 (defn extend-file-store-with-batch!
   "Extend a file store with batch operations"
   [store base-path]
-  (extend-type (class store)
+  (extend (class store)
     PBatchOperations
-    (-batch-dissoc [_ keys]
-      (go-try S
-        (file-batch-delete! base-path keys 10)
-        (count keys)))
+    {:-batch-dissoc
+     (fn [_ keys]
+       (go-try S
+         (file-batch-delete! base-path keys 10)
+         (count keys)))
 
-    (-batch-get [this keys]
-      (go-try S
-        ;; Parallel read with thread pool
-        (let [executor (Executors/newFixedThreadPool 10)]
-          (try
-            (let [futures (map #(k/get this %) keys)]
-              (<?? S (async/map vector futures)))
-            (finally
-              (.shutdown executor))))))
+     :-batch-get
+     (fn [this keys]
+       (go-try S
+         ;; Parallel read with thread pool
+         (let [executor (Executors/newFixedThreadPool 10)]
+           (try
+             (let [futures (map #(go-try S
+                                 (let [result (<? S (k/get this %))]
+                                   [% (if (and (vector? result) (= 2 (count result)))
+                                        (second result)
+                                        result)])) keys)]
+               (into {} (<?? S (async/map vector futures))))
+             (finally
+               (.shutdown executor))))))
 
-    (-batch-assoc [this kvs]
-      (go-try S
-        ;; Parallel write with thread pool
-        (let [executor (Executors/newFixedThreadPool 10)]
-          (try
-            (let [futures (map (fn [[k v]] (k/assoc this k v)) kvs)]
-              (<?? S (async/map (constantly :done) futures))
-              (count kvs))
-            (finally
-              (.shutdown executor))))))))
+     :-batch-assoc
+     (fn [this kvs]
+       (go-try S
+         ;; Parallel write with thread pool
+         (let [executor (Executors/newFixedThreadPool 10)]
+           (try
+             (let [futures (map (fn [[k v]] (k/assoc this k v)) kvs)]
+               (<?? S (async/map (constantly :done) futures))
+               (count kvs))
+             (finally
+               (.shutdown executor))))))}))
 
 ;; =============================================================================
 ;; Memory Store Batch Operations
@@ -174,27 +207,34 @@
 (defn extend-memory-store-with-batch!
   "Extend a memory store with batch operations"
   [store]
-  (extend-type (class store)
+  (extend (class store)
     PBatchOperations
-    (-batch-dissoc [this keys]
-      (go-try S
-        ;; For memory store, we can modify the atom directly
-        (swap! (:state this)
-               (fn [state]
-                 (apply dissoc state keys)))
-        (count keys)))
+    {:-batch-dissoc
+     (fn [this keys]
+       (go-try S
+         ;; Use konserve's dissoc for each key to ensure proper cleanup
+         (doseq [k keys]
+           (<? S (k/dissoc this k)))
+         (count keys)))
 
-    (-batch-get [this keys]
-      (go-try S
-        (let [state @(:state this)]
-          (into {} (map (fn [k] [k (get state k)]) keys)))))
+     :-batch-get
+     (fn [this keys]
+       (go-try S
+         ;; For memory store, we need to get each key properly through konserve API
+         (let [futures (map #(go-try S
+                             (let [result (<? S (k/get this %))]
+                               [% (if (and (vector? result) (= 2 (count result)))
+                                    (second result)
+                                    result)])) keys)]
+           (into {} (<?? S (async/map vector futures))))))
 
-    (-batch-assoc [this kvs]
-      (go-try S
-        (swap! (:state this)
-               (fn [state]
-                 (into state kvs)))
-        (count kvs)))))
+     :-batch-assoc
+     (fn [this kvs]
+       (go-try S
+         ;; Use konserve's assoc for each key-value pair to ensure proper serialization
+         (doseq [[k v] kvs]
+           (<? S (k/assoc this k v)))
+         (count kvs)))}))
 
 ;; =============================================================================
 ;; Generic Batch Wrapper
@@ -242,7 +282,12 @@
           (if (empty? remaining)
             results
             (let [batch (first remaining)
-                  futures (map #(go-try S [% (<? S (k/get store %))]) batch)
+                  futures (map #(go-try S
+                                 (let [result (<? S (k/get store %))]
+                                   ;; Handle metadata+value tuple format
+                                   [% (if (and (vector? result) (= 2 (count result)))
+                                        (second result)  ; Extract value from [metadata value]
+                                        result)])) batch)
                   batch-results (<?? S (async/map vector futures))]
               (recur (rest remaining)
                      (into results batch-results)))))))))

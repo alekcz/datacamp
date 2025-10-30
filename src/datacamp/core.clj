@@ -1304,12 +1304,19 @@
                 force-new false}
            :as opts}]
   (let [gc-fn (requiring-resolve 'datacamp.gc/gc-storage-optimized!)
-        get-status-fn (requiring-resolve 'datacamp.gc/get-status)
+        get-status-fn (requiring-resolve 'datacamp.gc/get-gc-status)
         resume-fn (requiring-resolve 'datacamp.gc/resume-gc!)
         optimize-fn (requiring-resolve 'datacamp.gc/optimize-for-backend)
 
+        ;; Check if functions loaded successfully
+        _ (when-not gc-fn
+            (throw (Exception. "Failed to load GC functions. Ensure datacamp.gc is available.")))
+
         db @conn
-        status @(get-status-fn db)
+        status (when get-status-fn
+                 (let [superv-async (requiring-resolve 'superv.async/<??)
+                       s-val (deref (requiring-resolve 'superv.async/S))]
+                   (superv-async s-val (get-status-fn db))))
         store-config (:store (:config db))
 
         ;; Auto-detect optimal settings if not provided
@@ -1332,10 +1339,13 @@
       (do
         (log/info "Resuming interrupted GC" (:gc-id status)
                   "from" (:last-checkpoint status))
-        (let [result @(resume-fn db (:gc-id status)
-                                :batch-size final-batch-size
-                                :parallel-batches final-parallel
-                                :dry-run dry-run)]
+        (let [superv-async (requiring-resolve 'superv.async/<??)
+              s-val (deref (requiring-resolve 'superv.async/S))
+              result (superv-async s-val
+                                  (resume-fn db (:gc-id status)
+                                            :batch-size final-batch-size
+                                            :parallel-batches final-parallel
+                                            :dry-run dry-run))]
           (assoc result :resumed? true)))
 
       ;; Start new GC
@@ -1344,12 +1354,15 @@
           (log/warn "Force starting new GC, abandoning" (:gc-id status)))
 
         (log/info "Starting new GC with" retention-days "day retention")
-        @(gc-fn db
-               :remove-before retention-date
-               :batch-size final-batch-size
-               :parallel-batches final-parallel
-               :checkpoint-interval checkpoint-interval
-               :dry-run dry-run)))))
+        (let [superv-async (requiring-resolve 'superv.async/<??)
+              s-val (deref (requiring-resolve 'superv.async/S))]
+          (superv-async s-val
+                       (gc-fn db
+                             :remove-before retention-date
+                             :batch-size final-batch-size
+                             :parallel-batches final-parallel
+                             :checkpoint-interval checkpoint-interval
+                             :dry-run dry-run)))))))
 
 (defn gc-status
   "Get the status of an ongoing or interrupted GC operation.
@@ -1378,5 +1391,9 @@
   ;;     :pending-branches 1}
   ```"
   [conn]
-  (let [get-status-fn (requiring-resolve 'datacamp.gc/get-gc-status)]
-    @(get-status-fn @conn)))
+  (let [get-status-fn (requiring-resolve 'datacamp.gc/get-gc-status)
+        superv-async (requiring-resolve 'superv.async/<??)
+        s-val (when superv-async (deref (requiring-resolve 'superv.async/S)))]
+    (if (and get-status-fn superv-async s-val)
+      (superv-async s-val (get-status-fn @conn))
+      (throw (Exception. "Failed to load GC functions. Ensure datacamp.gc is available.")))))

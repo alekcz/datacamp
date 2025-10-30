@@ -73,16 +73,26 @@
   (let [{:keys [eavt-key avet-key aevt-key
                 temporal-eavt-key temporal-avet-key temporal-aevt-key
                 schema-meta-key]} commit]
-    (set/union
-     (when schema-meta-key #{schema-meta-key})
-     (-mark eavt-key)
-     (-mark aevt-key)
-     (-mark avet-key)
-     (when (:keep-history? config)
-       (set/union
-        (-mark temporal-eavt-key)
-        (-mark temporal-aevt-key)
-        (-mark temporal-avet-key))))))
+    (try
+      (set/union
+       (when schema-meta-key #{schema-meta-key})
+       (if eavt-key (-mark eavt-key) #{})
+       (if aevt-key (-mark aevt-key) #{})
+       (if avet-key (-mark avet-key) #{})
+       (when (:keep-history? config)
+         (set/union
+          (if temporal-eavt-key (-mark temporal-eavt-key) #{})
+          (if temporal-aevt-key (-mark temporal-aevt-key) #{})
+          (if temporal-avet-key (-mark temporal-avet-key) #{}))))
+      (catch Exception e
+        ;; Handle the case where indices aren't ready for marking
+        ;; This can happen with empty or newly created databases
+        (if (and (.getMessage e)
+                 (.contains (.getMessage e) "flush"))
+          (do
+            (log/debug "Skipping commit marking - index not ready:" (.getMessage e))
+            #{})
+          (throw e))))))
 
 (defn- should-save-checkpoint?
   "Determine if we should save a checkpoint based on time and commit count"
