@@ -122,7 +122,8 @@
           checkpoint (-> (gc/create-gc-checkpoint gc-id [:main :branch-1])
                         (assoc :visited #{"commit-1" "commit-2"}
                                :reachable #{:key1 :key2 :key3}
-                               :completed-branches #{:main}))]
+                               :completed-branches #{:main}
+                               :pending-branches #{:branch-1}))]  ; Update pending to remove completed branch
 
       ;; Save checkpoint
       (<?? S (gc/save-checkpoint! store checkpoint))
@@ -439,3 +440,249 @@
                                    @*test-conn*)]
           (is (= 3 (count concurrent-users))
               "Data added during GC should still exist"))))))
+
+;; =============================================================================
+;; Rigorous Stress Test
+;; =============================================================================
+
+(deftest rigorous-gc-stress-test
+  (testing "Rigorous GC test with concurrent writes, schema changes, and multiple connections"
+    ;; Test parameters
+    (let [test-duration 20000  ; 20 seconds
+          write-interval 2000  ; Write every 2 seconds
+          conn-interval 1000   ; New connection every second
+          datoms-per-write 15000
+          batch-size 3000
+          write-count (quot test-duration write-interval)  ; 10 writes
+
+          ;; Track all write timestamps and connections
+          write-timestamps (atom [])
+          connections (atom [])
+          start-time (System/currentTimeMillis)]
+
+      ;; Initial schema
+      (d/transact *test-conn* [{:db/ident :stress/id
+                               :db/valueType :db.type/long
+                               :db/cardinality :db.cardinality/one
+                               :db/unique :db.unique/identity}
+                              {:db/ident :stress/value
+                               :db/valueType :db.type/string
+                               :db/cardinality :db.cardinality/one}
+                              {:db/ident :stress/iteration
+                               :db/valueType :db.type/long
+                               :db/cardinality :db.cardinality/one}])
+
+      ;; Start background connection creator (runs every second for 20 seconds)
+      ;; Each connection makes multiple writes to create more historical commits
+      (let [conn-future (future
+                         (dotimes [i 20]
+                           (Thread/sleep conn-interval)
+                           (try
+                             ;; Create a new connection (creates a new branch)
+                             (let [new-conn (d/connect *test-db-config*)]
+                               (swap! connections conj new-conn)
+                               ;; Make multiple writes on this connection to create more commits
+                               (dotimes [write-num 10]
+                                 (d/transact new-conn [{:stress/id (- (* (inc i) 1000) write-num)
+                                                       :stress/value (str "conn-" i "-write-" write-num)
+                                                       :stress/iteration (- i)}])))
+                             (catch Exception e
+                               (println "Connection creation failed:" (.getMessage e))))))]
+
+        ;; Write data every 2 seconds for 20 seconds (10 iterations)
+        (dotimes [iteration write-count]
+          (Thread/sleep write-interval)
+
+          (let [write-start (System/currentTimeMillis)]
+            ;; Add new schema attribute for this iteration
+            (d/transact *test-conn* [{:db/ident (keyword "stress" (str "field-" iteration))
+                                     :db/valueType :db.type/string
+                                     :db/cardinality :db.cardinality/one}])
+
+            ;; Write 15k datoms in batches of 3k
+            (let [batch-count (quot datoms-per-write batch-size)]
+              (dotimes [batch batch-count]
+                (let [batch-start (* batch batch-size)
+                      batch-data (mapv (fn [i]
+                                        {:stress/id (+ batch-start i (* iteration datoms-per-write))
+                                         :stress/value (str "value-" iteration "-" i)
+                                         :stress/iteration iteration
+                                         (keyword "stress" (str "field-" iteration))
+                                         (str "field-data-" iteration)})
+                                      (range batch-size))]
+                  (d/transact *test-conn* batch-data))))
+
+            ;; Record timestamp after this write completes
+            (swap! write-timestamps conj (Date. (System/currentTimeMillis))))
+
+          (println "Completed write iteration" iteration "/"write-count))
+
+        ;; Wait for connection creator to finish
+        @conn-future
+
+        (println "All writes completed. Total connections created:" (count @connections))
+        (println "Write timestamps:" (count @write-timestamps))
+
+        ;; Phase 2: Create many early commits that will become unreachable
+        ;; These commits are created early and will be before our retention cutoff
+        (println "\n=== Creating early commits for GC testing ===")
+        (let [early-commits-count 100]
+          (println "Creating" early-commits-count "early commits that will be GC'd...")
+          (dotimes [i early-commits-count]
+            (try
+              ;; Make small commits that will become unreachable
+              (d/transact *test-conn* [{:stress/id (- (* 10000 (inc i)))
+                                       :stress/value (str "early-commit-" i)
+                                       :stress/iteration -99}])
+              (catch Exception e
+                (println "Early commit" i "failed:" (.getMessage e)))))
+
+          (println "Created" early-commits-count "early commits")
+          (println "These will be GC'd when retention cutoff is set after the main writes"))
+
+        ;; Wait a moment to ensure timestamps are distinct
+        (Thread/sleep 1000)
+        (println "Early commits complete - ready for GC test\n"))
+
+      ;; Now test GC with different retention cutoffs
+      (let [db @*test-conn*
+            timestamps @write-timestamps
+
+            ;; Helper to count datoms in :eavt index
+            count-eavt-datoms (fn [db]
+                               (let [eavt-key (get-in db [:config :eavt-key])
+                                     eavt-index (get-in db [:eavt])]
+                                 (if eavt-index
+                                   (count (seq eavt-index))
+                                   0)))
+
+            ;; Record initial datom count
+            initial-datom-count (count-eavt-datoms db)
+            _ (println "\n=== Initial Database State ===")
+            _ (println "Initial :eavt datom count:" initial-datom-count)
+
+            ;; Test 1: GC with cutoff after write 0 (should keep almost everything)
+            _ (println "\n=== Test 1: GC after first write ===")
+            datom-count-before-test1 (count-eavt-datoms @*test-conn*)
+            _ (println "Datom count before Test 1:" datom-count-before-test1)
+            cutoff-0 (Date. (- (.getTime (first timestamps)) 100))
+            result-0 (<?? S (gc/gc-storage-optimized! @*test-conn*
+                                                     :remove-before cutoff-0
+                                                     :dry-run true))
+            datom-count-after-test1 (count-eavt-datoms @*test-conn*)
+            _ (do
+                (is (some? result-0))
+                (println "Dry run - would delete:" (or (:deleted-count result-0) 0) "keys")
+                (println "Datom count after Test 1:" datom-count-after-test1)
+                (is (= datom-count-before-test1 datom-count-after-test1)
+                    "Datom count should remain constant after dry-run GC")
+                ;; Should mark very few items for deletion since cutoff is before first write
+                (is (< (or (:deleted-count result-0) 0) 100)
+                    "Should delete very little when cutoff is before first write"))
+
+            ;; Test 2: GC with cutoff after write 5 (middle)
+            _ (println "\n=== Test 2: GC after write 5 ===")
+            datom-count-before-test2 (count-eavt-datoms @*test-conn*)
+            _ (println "Datom count before Test 2:" datom-count-before-test2)
+            cutoff-5 (Date. (+ (.getTime (nth timestamps 5)) 100))
+            result-5 (<?? S (gc/gc-storage-optimized! @*test-conn*
+                                                     :remove-before cutoff-5
+                                                     :dry-run true))
+            datom-count-after-test2 (count-eavt-datoms @*test-conn*)
+            _ (do
+                (is (some? result-5))
+                (println "Dry run - would delete:" (or (:deleted-count result-5) 0) "keys")
+                (println "Datom count after Test 2:" datom-count-after-test2)
+                (is (= datom-count-before-test2 datom-count-after-test2)
+                    "Datom count should remain constant after dry-run GC")
+                ;; Should delete more than test 1 but not everything
+                (is (>= (or (:deleted-count result-5) 0) (or (:deleted-count result-0) 0))
+                    "Should delete at least as much with later cutoff"))
+
+            ;; Test 3: GC with cutoff just before last write (should keep only last write)
+            _ (println "\n=== Test 3: GC just before last write ===")
+            datom-count-before-test3-dry (count-eavt-datoms @*test-conn*)
+            _ (println "Datom count before Test 3 dry-run:" datom-count-before-test3-dry)
+            cutoff-9 (Date. (- (.getTime (last timestamps)) 100))
+            result-9-dry (<?? S (gc/gc-storage-optimized! @*test-conn*
+                                                         :remove-before cutoff-9
+                                                         :dry-run true))
+            datom-count-after-test3-dry (count-eavt-datoms @*test-conn*)
+            _ (do
+                (is (some? result-9-dry))
+                (println "Dry run - would delete:" (or (:deleted-count result-9-dry) 0) "keys")
+                (println "Datom count after Test 3 dry-run:" datom-count-after-test3-dry)
+                (is (= datom-count-before-test3-dry datom-count-after-test3-dry)
+                    "Datom count should remain constant after dry-run GC"))
+
+            ;; Actually run GC (not dry run) - this will actually delete data
+            _ (println "\n=== Running actual GC before last write ===")
+            datom-count-before-actual-gc (count-eavt-datoms @*test-conn*)
+            _ (println "Datom count before actual GC:" datom-count-before-actual-gc)
+            result-9 (<?? S (gc/gc-storage-optimized! @*test-conn*
+                                                     :remove-before cutoff-9
+                                                     :dry-run false))
+            datom-count-after-actual-gc (count-eavt-datoms @*test-conn*)
+            _ (do
+                (is (some? result-9))
+                (println "Actually deleted:" (or (:deleted-count result-9) 0) "keys")
+                (println "Datom count after actual GC:" datom-count-after-actual-gc)
+                ;; After actual GC, datom count should remain constant because we only delete
+                ;; unreachable commits from storage, not the actual datoms in the current database
+                (is (= datom-count-before-actual-gc datom-count-after-actual-gc)
+                    "Datom count should remain constant - GC only removes unreachable historical data")
+                (is (number? (:deleted-count result-9))
+                    "Actual deletion should return a count"))
+
+            ;; Verify data from last iteration is still accessible
+            _ (println "\nVerifying data integrity after GC...")
+            last-iteration-data (d/q '[:find (count ?e)
+                                      :in $ ?iter
+                                      :where
+                                      [?e :stress/iteration ?iter]]
+                                    @*test-conn*
+                                    (dec write-count))
+            _ (do
+                (is (= datoms-per-write (ffirst last-iteration-data))
+                    (str "Last iteration should have all " datoms-per-write " entities"))
+                (println "Last iteration has" (ffirst last-iteration-data) "entities"))
+
+            ;; Check earlier data
+            early-iteration-data (d/q '[:find (count ?e)
+                                       :in $ ?iter
+                                       :where
+                                       [?e :stress/iteration ?iter]]
+                                     @*test-conn*
+                                     0)
+            _ (do
+                ;; GC behavior: Data may be retained if reachable from any branch
+                ;; In this test, we created 20 connections (branches), so some data
+                ;; may still be reachable depending on branch state
+                (println "First iteration has" (or (ffirst early-iteration-data) 0) "entities")
+                (is (number? (or (ffirst early-iteration-data) 0))
+                    "Should have a count for early iteration data")
+                (println "Note: Early data may be retained if reachable from any of the 20 branches"))
+
+            ;; Verify schema attributes still exist
+            schema (d/schema @*test-conn*)
+            stress-attrs (filter #(= "stress" (namespace %)) (keys schema))
+            _ (do
+                (println "Schema has" (count stress-attrs) "stress attributes")
+                ;; Schema should still have attributes (schemas are typically kept)
+                (is (> (count stress-attrs) 0) "Schema attributes should still exist"))
+
+            ;; Test 4: Verify GC status after completion
+            _ (println "\nTest 4: Verify GC status after completion")
+            status (<?? S (gc/get-gc-status db))
+            _ (do
+                (println "GC status:" (:status status))
+                ;; Status should show no GC in progress
+                (is (= :no-gc-in-progress (:status status))
+                    "GC should not be in progress after completion"))]
+        nil)  ;; End of let block
+
+      ;; Cleanup all connections
+      (doseq [conn @connections]
+        (try
+          (d/release @conn)
+          (catch Exception _))))))

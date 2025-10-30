@@ -369,6 +369,8 @@
           (let [all-metas (<? S (k/keys store))
                 would-delete (remove #(contains? reachable (:key %)) all-metas)]
             (log/info "DRY RUN: Would delete" (count would-delete) "keys")
+            ;; Clean up checkpoint after successful dry-run
+            (<? S (delete-checkpoint! store))
             {:reachable-count (count reachable)
              :would-delete-count (count would-delete)
              :dry-run true})

@@ -298,6 +298,26 @@
              (when (not (zero? (:exit result)))
                (System/exit 1))))}
 
+  test:gc:stress
+  {:doc "Run rigorous GC stress test (20 seconds, 150k+ datoms, concurrent writes)"
+   :task (do
+           (println "🗑️  Running rigorous GC stress test...")
+           (println "⚠️  This test runs for ~20 seconds and writes ~150k datoms\n")
+           (println "This test validates:")
+           (println "  • 15k datoms per write in 3k batches")
+           (println "  • 10 write iterations (every 2 seconds)")
+           (println "  • 20 concurrent connections (every 1 second, 10 writes each)")
+           (println "  • 100 early commits + 200 branch commits = ~300 unreachable commits")
+           (println "  • Schema evolution during writes")
+           (println "  • Multiple GC runs with different retention cutoffs")
+           (println "  • :eavt datom count verification at each GC step")
+           (println "  • Data integrity verification after GC")
+           (println "  • Dry run vs actual deletion comparison\n")
+           (let [result (p/shell {:continue true}
+                               "lein test :only datacamp.gc-test/rigorous-gc-stress-test")]
+             (when (not (zero? (:exit result)))
+               (System/exit 1))))}
+
   test:backend
   {:doc "Run all backend tests (starts/stops databases as needed)"
    :task (do
